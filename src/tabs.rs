@@ -14,7 +14,9 @@
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime};
 
-use crate::textfile::{self, Encoding, Eol};
+use crate::textfile;
+#[allow(unused_imports)] // re-exported for `app`; unused until 07 wires tabs in
+pub use crate::textfile::{Encoding, Eol, LARGE_FILE_BYTES};
 
 /// Over this many bytes of text a Markdown file loses styling, spell check
 /// and the Rendered view (spec §5, the 1 MB rule).
@@ -186,6 +188,9 @@ pub enum Action {
     Recheck { path: PathBuf, after: Duration },
     /// Move this file to the top of the recent files.
     AddRecent(PathBuf),
+    /// Save As refused: tell the user "<name> is open in another tab.
+    /// Close it first."
+    OpenInAnotherTab { name: String },
     /// Show this note in the status bar for a moment.
     Flash(StatusNote),
     /// Every Tab is dealt with: close the Window.
@@ -656,10 +661,20 @@ impl Tabs {
     }
 
     /// The user picked `path` in the Save As dialog.
+    /// A file open in another Tab is refused: both Tabs stay as they are,
+    /// and a close waiting on this save is called off.
     pub fn save_as_chosen(&mut self, id: TabId, path: PathBuf) -> Vec<Action> {
-        match self.get(id) {
-            Some(tab) => vec![tab.write(path)],
-            None => Vec::new(),
+        let Some(tab) = self.get(id) else {
+            return Vec::new();
+        };
+        let elsewhere = self.tabs.iter().find(|t| t.id != id && t.is_at(&path));
+        match elsewhere {
+            Some(other) => {
+                let name = other.name();
+                self.save_failed(id);
+                vec![Action::OpenInAnotherTab { name }]
+            }
+            None => vec![tab.write(path)],
         }
     }
 
@@ -690,13 +705,6 @@ impl Tabs {
         tab.fit_view();
         actions.push(Action::Changed(id));
         actions.push(Action::AddRecent(path.clone()));
-
-        // Another Tab on the same file just had it overwritten.
-        for other in self.tabs_at(&path) {
-            if other != id {
-                actions.extend(self.react_to_disk(other, Some(stat), now));
-            }
-        }
 
         match self.pending_close {
             Some(PendingClose::Tab(waiting)) if waiting == id => {
@@ -965,7 +973,7 @@ impl Tabs {
         id
     }
 
-    /// Every Tab on this file (two, after a Save As onto an open file).
+    /// Every Tab on this file (at most one: open switches, Save As refuses).
     fn tabs_at(&self, path: &Path) -> Vec<TabId> {
         self.tabs
             .iter()

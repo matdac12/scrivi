@@ -1,7 +1,6 @@
 //! One test per Tab rule in spec §3, §7 and §8. Each name states the rule.
 
 use super::*;
-use crate::textfile::LARGE_FILE_BYTES;
 
 fn names(tabs: &Tabs) -> Vec<String> {
     tabs.iter().map(Tab::name).collect()
@@ -863,12 +862,45 @@ fn another_programs_write_right_after_the_own_save_is_a_disk_change() {
 }
 
 #[test]
-fn saving_over_a_file_open_in_another_tab_is_a_disk_change_for_that_tab() {
+fn save_as_onto_a_file_open_in_another_tab_is_refused_and_both_tabs_are_untouched() {
     let mut tabs = Tabs::new();
-    let other = edited_file(&mut tabs, r"C:\a.md");
+    let other = edited_file(&mut tabs, r"C:\notes\a.md");
     let id = edited_untitled(&mut tabs);
-    tabs.saved(id, path(r"C:\a.md"), stat(5, 600), t0());
-    assert_eq!(tabs.get(other).unwrap().notice(), Some(Notice::DiskChange));
+    assert_eq!(
+        tabs.save_as_chosen(id, path("c:/NOTES/A.md")),
+        [Action::OpenInAnotherTab {
+            name: "a.md".into()
+        }]
+    );
+    let (mine, theirs) = (tabs.get(id).unwrap(), tabs.get(other).unwrap());
+    assert!(mine.is_untitled() && mine.unsaved());
+    assert_eq!(theirs.path(), Some(path(r"C:\notes\a.md").as_path()));
+    assert!(theirs.unsaved());
+    assert_eq!(theirs.notice(), None);
+}
+
+#[test]
+fn a_refused_save_as_calls_off_the_close_waiting_on_it() {
+    let mut tabs = Tabs::new();
+    open_file(&mut tabs, r"C:\a.md");
+    let id = edited_untitled(&mut tabs);
+    tabs.close(id);
+    tabs.close_reply(id, CloseReply::Save);
+    tabs.save_as_chosen(id, path(r"C:\a.md"));
+    // A later, ordinary save must not close the Tab.
+    tabs.save_as_chosen(id, path(r"C:\b.md"));
+    let actions = tabs.saved(id, path(r"C:\b.md"), stat(5, 200), t0());
+    assert!(!actions.iter().any(|a| matches!(a, Action::Closed { .. })));
+}
+
+#[test]
+fn save_as_onto_the_tabs_own_file_is_allowed() {
+    let mut tabs = Tabs::new();
+    let id = edited_file(&mut tabs, r"C:\a.md");
+    assert!(matches!(
+        tabs.save_as_chosen(id, path(r"C:\a.md"))[..],
+        [Action::Write { .. }]
+    ));
 }
 
 // --- §7 Encoding and line endings -----------------------------------------
