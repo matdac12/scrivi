@@ -25,35 +25,42 @@ use windows::core::{w, PCWSTR, PWSTR};
 use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
 use windows::Win32::Globalization::GetACP;
 use windows::Win32::Graphics::Gdi::{
-    BeginPaint, EndPaint, GetMonitorInfoW, InvalidateRect, MonitorFromWindow, ScreenToClient, MONITORINFO,
-    MONITOR_DEFAULTTONEAREST, PAINTSTRUCT,
+    BeginPaint, EndPaint, GetMonitorInfoW, InvalidateRect, MonitorFromWindow, ScreenToClient,
+    MONITORINFO, MONITOR_DEFAULTTONEAREST, PAINTSTRUCT,
 };
 use windows::Win32::System::DataExchange::COPYDATASTRUCT;
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Controls::{
-    InitCommonControlsEx, TaskDialogIndirect, ICC_BAR_CLASSES, INITCOMMONCONTROLSEX, TASKDIALOGCONFIG,
-    TASKDIALOG_BUTTON, TDCBF_CANCEL_BUTTON, TDF_ALLOW_DIALOG_CANCELLATION, TDF_POSITION_RELATIVE_TO_WINDOW,
-    TOOLTIPS_CLASSW, TTF_SUBCLASS, TTM_ADDTOOLW, TTM_NEWTOOLRECTW, TTM_POP, TTM_UPDATETIPTEXTW, TTS_ALWAYSTIP,
-    TTS_NOPREFIX, TTTOOLINFOW, WM_MOUSELEAVE,
+    InitCommonControlsEx, TaskDialogIndirect, ICC_BAR_CLASSES, INITCOMMONCONTROLSEX,
+    TASKDIALOGCONFIG, TASKDIALOG_BUTTON, TDCBF_CANCEL_BUTTON, TDF_ALLOW_DIALOG_CANCELLATION,
+    TDF_POSITION_RELATIVE_TO_WINDOW, TOOLTIPS_CLASSW, TTF_SUBCLASS, TTM_ADDTOOLW, TTM_NEWTOOLRECTW,
+    TTM_POP, TTM_UPDATETIPTEXTW, TTS_ALWAYSTIP, TTS_NOPREFIX, TTTOOLINFOW, WM_MOUSELEAVE,
 };
 use windows::Win32::UI::HiDpi::{GetDpiForWindow, GetSystemMetricsForDpi};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    GetCapture, ReleaseCapture, SetCapture, SetFocus, TrackMouseEvent, TME_LEAVE, TME_NONCLIENT, TRACKMOUSEEVENT,
-    VK_ADD, VK_NUMPAD0, VK_OEM_MINUS, VK_OEM_PLUS, VK_SUBTRACT, VK_TAB,
+    GetCapture, ReleaseCapture, SetCapture, SetFocus, TrackMouseEvent, TME_LEAVE, TME_NONCLIENT,
+    TRACKMOUSEEVENT, VK_ADD, VK_NUMPAD0, VK_OEM_MINUS, VK_OEM_PLUS, VK_SUBTRACT, VK_TAB,
 };
-use windows::Win32::UI::Shell::{SHAppBarMessage, ABE_BOTTOM, ABE_LEFT, ABE_RIGHT, ABE_TOP, ABM_GETAUTOHIDEBAREX, APPBARDATA};
+use windows::Win32::UI::Shell::{
+    SHAppBarMessage, ABE_BOTTOM, ABE_LEFT, ABE_RIGHT, ABE_TOP, ABM_GETAUTOHIDEBAREX, APPBARDATA,
+};
 use windows::Win32::UI::WindowsAndMessaging::*;
 
 use crate::chrome::{Frame, Hit, Layout, Painter, Rect, Status, TabView, View};
 use crate::editor::{sci, Caret, Editor, NotifyHeader, ViewState};
 use crate::launch::{self, Request};
 use crate::mdview::{self, Applied};
-use crate::proto::{self, COPYDATA_REQUEST, ICON, RESTYLE_MS, SPELL_MS, TIMER_PREFS, TIMER_RESTYLE, TIMER_SPELL, WM_EDITOR_DPI, WM_HANDOFF};
 use crate::proto::WM_DISK_EVENT;
+use crate::proto::{
+    self, COPYDATA_REQUEST, ICON, RESTYLE_MS, SPELL_MS, TIMER_PREFS, TIMER_RESTYLE, TIMER_SPELL,
+    WM_EDITOR_DPI, WM_HANDOFF,
+};
 use crate::proto::{WM_RENDERED_FAILED, WM_RENDERED_LINK, WM_RENDERED_SHOWN};
 use crate::rendered::webview;
 use crate::spellview::SpellView;
-use crate::tabs::{Action, CloseReply, EditorDoc, FileStat, LoadedFile, StatusNote, Tab, TabId, Tabs};
+use crate::tabs::{
+    Action, CloseReply, EditorDoc, FileStat, LoadedFile, StatusNote, Tab, TabId, Tabs,
+};
 use crate::textfile::{self, Encoding, Eol};
 
 // SCRIVI-16: opening and saving, the menus. New code lives in these files.
@@ -192,7 +199,10 @@ fn wide(s: &str) -> Vec<u16> {
 }
 
 fn xy(lp: LPARAM) -> (i32, i32) {
-    ((lp.0 & 0xffff) as i16 as i32, ((lp.0 >> 16) & 0xffff) as i16 as i32)
+    (
+        (lp.0 & 0xffff) as i16 as i32,
+        ((lp.0 >> 16) & 0xffff) as i16 as i32,
+    )
 }
 
 fn scale_of(hwnd: HWND) -> f32 {
@@ -203,7 +213,10 @@ fn scale_of(hwnd: HWND) -> f32 {
 fn resize_border(dpi: u32) -> (i32, i32) {
     unsafe {
         let pad = GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi);
-        (GetSystemMetricsForDpi(SM_CXFRAME, dpi) + pad, GetSystemMetricsForDpi(SM_CYFRAME, dpi) + pad)
+        (
+            GetSystemMetricsForDpi(SM_CXFRAME, dpi) + pad,
+            GetSystemMetricsForDpi(SM_CYFRAME, dpi) + pad,
+        )
     }
 }
 
@@ -216,16 +229,23 @@ fn headless() -> bool {
 /// Returns the process exit code.
 pub fn run(initial: Request) -> i32 {
     unsafe {
-        let Ok(module) = GetModuleHandleW(None) else { return 1 };
+        let Ok(module) = GetModuleHandleW(None) else {
+            return 1;
+        };
         let hinstance: HINSTANCE = module.into();
         if !Editor::register_class(hinstance) {
             return 1;
         }
         // The tooltip class.
-        let icc = INITCOMMONCONTROLSEX { dwSize: std::mem::size_of::<INITCOMMONCONTROLSEX>() as u32, dwICC: ICC_BAR_CLASSES };
+        let icc = INITCOMMONCONTROLSEX {
+            dwSize: std::mem::size_of::<INITCOMMONCONTROLSEX>() as u32,
+            dwICC: ICC_BAR_CLASSES,
+        };
         let _ = InitCommonControlsEx(&icc);
         let icon = |size: i32| {
-            LoadImageW(Some(hinstance), ICON, IMAGE_ICON, size, size, LR_SHARED).map(|h| HICON(h.0)).unwrap_or_default()
+            LoadImageW(Some(hinstance), ICON, IMAGE_ICON, size, size, LR_SHARED)
+                .map(|h| HICON(h.0))
+                .unwrap_or_default()
         };
         let class = WNDCLASSEXW {
             cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
@@ -268,8 +288,12 @@ pub fn run(initial: Request) -> i32 {
         let maximized = recent::restore_window(hwnd);
 
         let dpi = GetDpiForWindow(hwnd);
-        let Ok(painter) = Painter::new(hinstance, dpi as f32 / 96.0) else { return 1 };
-        let Some(editor) = Editor::create(hwnd, hinstance, dpi) else { return 1 };
+        let Ok(painter) = Painter::new(hinstance, dpi as f32 / 96.0) else {
+            return 1;
+        };
+        let Some(editor) = Editor::create(hwnd, hinstance, dpi) else {
+            return 1;
+        };
         let tooltip = create_tooltip(hwnd, hinstance);
         let menu_text = painter.menu_text();
         let ui = Ui {
@@ -343,29 +367,109 @@ fn accelerators() -> HACCEL {
     let ctrl = FCONTROL | FVIRTKEY;
     let key = |c: u8| c as u16;
     let table = [
-        ACCEL { fVirt: ctrl, key: key(b'T'), cmd: cmd::NEW_TAB },
+        ACCEL {
+            fVirt: ctrl,
+            key: key(b'T'),
+            cmd: cmd::NEW_TAB,
+        },
         // Ctrl+N: an alias of Ctrl+T, for Notepad hands (SCRIVI-16).
-        ACCEL { fVirt: ctrl, key: key(b'N'), cmd: cmd::NEW_TAB },
-        ACCEL { fVirt: ctrl, key: key(b'W'), cmd: cmd::CLOSE_TAB },
-        ACCEL { fVirt: ctrl, key: VK_TAB.0, cmd: cmd::NEXT_TAB },
-        ACCEL { fVirt: ctrl | FSHIFT, key: VK_TAB.0, cmd: cmd::PREV_TAB },
-        ACCEL { fVirt: ctrl, key: key(b'O'), cmd: cmd::OPEN },
-        ACCEL { fVirt: ctrl, key: key(b'S'), cmd: cmd::SAVE },
-        ACCEL { fVirt: ctrl | FSHIFT, key: key(b'S'), cmd: cmd::SAVE_AS },
-        ACCEL { fVirt: ctrl, key: key(b'E'), cmd: cmd::RENDERED_VIEW },
+        ACCEL {
+            fVirt: ctrl,
+            key: key(b'N'),
+            cmd: cmd::NEW_TAB,
+        },
+        ACCEL {
+            fVirt: ctrl,
+            key: key(b'W'),
+            cmd: cmd::CLOSE_TAB,
+        },
+        ACCEL {
+            fVirt: ctrl,
+            key: VK_TAB.0,
+            cmd: cmd::NEXT_TAB,
+        },
+        ACCEL {
+            fVirt: ctrl | FSHIFT,
+            key: VK_TAB.0,
+            cmd: cmd::PREV_TAB,
+        },
+        ACCEL {
+            fVirt: ctrl,
+            key: key(b'O'),
+            cmd: cmd::OPEN,
+        },
+        ACCEL {
+            fVirt: ctrl,
+            key: key(b'S'),
+            cmd: cmd::SAVE,
+        },
+        ACCEL {
+            fVirt: ctrl | FSHIFT,
+            key: key(b'S'),
+            cmd: cmd::SAVE_AS,
+        },
+        ACCEL {
+            fVirt: ctrl,
+            key: key(b'E'),
+            cmd: cmd::RENDERED_VIEW,
+        },
         // Find, wrap and zoom (SCRIVI-20). Ctrl++ is the plus key on layouts
         // where it is unshifted, and Shift and the = key on the others.
-        ACCEL { fVirt: ctrl, key: key(b'F'), cmd: cmd::FIND },
-        ACCEL { fVirt: ctrl, key: key(b'H'), cmd: cmd::REPLACE },
-        ACCEL { fVirt: ctrl, key: key(b'G'), cmd: cmd::GO_TO_LINE },
-        ACCEL { fVirt: FALT | FVIRTKEY, key: key(b'Z'), cmd: cmd::WORD_WRAP },
-        ACCEL { fVirt: ctrl, key: VK_OEM_PLUS.0, cmd: cmd::ZOOM_IN },
-        ACCEL { fVirt: ctrl | FSHIFT, key: VK_OEM_PLUS.0, cmd: cmd::ZOOM_IN },
-        ACCEL { fVirt: ctrl, key: VK_ADD.0, cmd: cmd::ZOOM_IN },
-        ACCEL { fVirt: ctrl, key: VK_OEM_MINUS.0, cmd: cmd::ZOOM_OUT },
-        ACCEL { fVirt: ctrl, key: VK_SUBTRACT.0, cmd: cmd::ZOOM_OUT },
-        ACCEL { fVirt: ctrl, key: key(b'0'), cmd: cmd::ZOOM_RESET },
-        ACCEL { fVirt: ctrl, key: VK_NUMPAD0.0, cmd: cmd::ZOOM_RESET },
+        ACCEL {
+            fVirt: ctrl,
+            key: key(b'F'),
+            cmd: cmd::FIND,
+        },
+        ACCEL {
+            fVirt: ctrl,
+            key: key(b'H'),
+            cmd: cmd::REPLACE,
+        },
+        ACCEL {
+            fVirt: ctrl,
+            key: key(b'G'),
+            cmd: cmd::GO_TO_LINE,
+        },
+        ACCEL {
+            fVirt: FALT | FVIRTKEY,
+            key: key(b'Z'),
+            cmd: cmd::WORD_WRAP,
+        },
+        ACCEL {
+            fVirt: ctrl,
+            key: VK_OEM_PLUS.0,
+            cmd: cmd::ZOOM_IN,
+        },
+        ACCEL {
+            fVirt: ctrl | FSHIFT,
+            key: VK_OEM_PLUS.0,
+            cmd: cmd::ZOOM_IN,
+        },
+        ACCEL {
+            fVirt: ctrl,
+            key: VK_ADD.0,
+            cmd: cmd::ZOOM_IN,
+        },
+        ACCEL {
+            fVirt: ctrl,
+            key: VK_OEM_MINUS.0,
+            cmd: cmd::ZOOM_OUT,
+        },
+        ACCEL {
+            fVirt: ctrl,
+            key: VK_SUBTRACT.0,
+            cmd: cmd::ZOOM_OUT,
+        },
+        ACCEL {
+            fVirt: ctrl,
+            key: key(b'0'),
+            cmd: cmd::ZOOM_RESET,
+        },
+        ACCEL {
+            fVirt: ctrl,
+            key: VK_NUMPAD0.0,
+            cmd: cmd::ZOOM_RESET,
+        },
     ];
     unsafe { CreateAcceleratorTableW(&table) }.unwrap_or_default()
 }
@@ -399,7 +503,12 @@ unsafe fn create_tooltip(owner: HWND, hinstance: HINSTANCE) -> HWND {
             lpszText: PWSTR(text.as_mut_ptr()),
             ..Default::default()
         };
-        SendMessageW(tip, TTM_ADDTOOLW, None, Some(LPARAM(&info as *const _ as isize)));
+        SendMessageW(
+            tip,
+            TTM_ADDTOOLW,
+            None,
+            Some(LPARAM(&info as *const _ as isize)),
+        );
         tip
     }
 }
@@ -409,17 +518,35 @@ unsafe fn create_tooltip(owner: HWND, hinstance: HINSTANCE) -> HWND {
 unsafe fn place(hwnd: HWND) {
     unsafe {
         let s = scale_of(hwnd);
-        let mut mi = MONITORINFO { cbSize: std::mem::size_of::<MONITORINFO>() as u32, ..Default::default() };
-        let work = if GetMonitorInfoW(MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST), &mut mi).as_bool() {
+        let mut mi = MONITORINFO {
+            cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+            ..Default::default()
+        };
+        let work = if GetMonitorInfoW(MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST), &mut mi)
+            .as_bool()
+        {
             mi.rcWork
         } else {
-            RECT { left: 0, top: 0, right: 1280, bottom: 800 }
+            RECT {
+                left: 0,
+                top: 0,
+                right: 1280,
+                bottom: 800,
+            }
         };
         let w = ((START_W * s) as i32).min(work.right - work.left);
         let h = ((START_H * s) as i32).min(work.bottom - work.top);
         let x = work.left + (work.right - work.left - w) / 2;
         let y = work.top + (work.bottom - work.top - h) / 2;
-        let _ = SetWindowPos(hwnd, None, x, y, w, h, SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+        let _ = SetWindowPos(
+            hwnd,
+            None,
+            x,
+            y,
+            w,
+            h,
+            SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
+        );
     }
 }
 
@@ -458,7 +585,9 @@ fn log_editor(a: &App) {
     const SCI_GETREADONLY: u32 = 2140;
     const SCI_GETUNDOCOLLECTION: u32 = 2019;
     const SCI_GETWRAPMODE: u32 = 2269;
-    let Some(path) = std::env::var_os("SCRIVI_TEST_EDITOR") else { return };
+    let Some(path) = std::env::var_os("SCRIVI_TEST_EDITOR") else {
+        return;
+    };
     let e = &a.editor;
     let tabs = a.tabs.borrow();
     let shown = a.shown.get().and_then(|id| tabs.get(id));
@@ -472,12 +601,17 @@ notice={}
 unsaved={}
 loads={}
 ",
-        a.shown.get().and_then(|id| a.tabs.borrow().get(id).map(Tab::name)).unwrap_or_default(),
+        a.shown
+            .get()
+            .and_then(|id| a.tabs.borrow().get(id).map(Tab::name))
+            .unwrap_or_default(),
         e.call(SCI_GETREADONLY, 0, 0),
         e.call(SCI_GETUNDOCOLLECTION, 0, 0),
         e.call(SCI_GETWRAPMODE, 0, 0),
         e.text_len(),
-        shown.and_then(|t| t.notice()).map_or("none".into(), |n| format!("{n:?}")),
+        shown
+            .and_then(|t| t.notice())
+            .map_or("none".into(), |n| format!("{n:?}")),
         shown.is_some_and(|t| t.unsaved()),
         LOADS.load(std::sync::atomic::Ordering::Relaxed),
     );
@@ -491,11 +625,23 @@ loads={}
 /// with the strip, one Tab name per line, the active one starred.
 #[cfg(debug_assertions)]
 fn log_tabs(a: &App) {
-    let Some(path) = std::env::var_os("SCRIVI_TEST_TABS") else { return };
+    let Some(path) = std::env::var_os("SCRIVI_TEST_TABS") else {
+        return;
+    };
     let text: String = {
         let tabs = a.tabs.borrow();
         tabs.iter()
-            .map(|t| format!("{}{}\n", if Some(t.id()) == tabs.active() { "*" } else { "" }, t.name()))
+            .map(|t| {
+                format!(
+                    "{}{}\n",
+                    if Some(t.id()) == tabs.active() {
+                        "*"
+                    } else {
+                        ""
+                    },
+                    t.name()
+                )
+            })
             .collect()
     };
     // Write then rename, so a reader never sees half a list.
@@ -507,8 +653,14 @@ fn log_tabs(a: &App) {
 
 #[cfg(debug_assertions)]
 fn log_request(request: &Request) {
-    let Some(path) = std::env::var_os("SCRIVI_TEST_LOG") else { return };
-    let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(path) else {
+    let Some(path) = std::env::var_os("SCRIVI_TEST_LOG") else {
+        return;
+    };
+    let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+    else {
         return;
     };
     let line = match request {
@@ -550,10 +702,22 @@ fn perform(a: &App, action: Action) {
             let doc = a.editor.create_document(false);
             adopt(a, id, doc);
         }
-        Action::Load { id, path, encoding, keep_caret_line } => load(a, id, &path, encoding, keep_caret_line),
-        Action::Write { id, path, encoding, eol } => files::write(a, id, &path, encoding, eol),
+        Action::Load {
+            id,
+            path,
+            encoding,
+            keep_caret_line,
+        } => load(a, id, &path, encoding, keep_caret_line),
+        Action::Write {
+            id,
+            path,
+            encoding,
+            eol,
+        } => files::write(a, id, &path, encoding, eol),
         Action::AskSaveAs { id, default } => files::ask_save_as(a, id, &default),
-        Action::AskDiscardForReopen { id, encoding } => files::ask_discard_for_reopen(a, id, encoding),
+        Action::AskDiscardForReopen { id, encoding } => {
+            files::ask_discard_for_reopen(a, id, encoding)
+        }
         Action::ConvertEol { id, eol } => in_document(a, id, |e| e.convert_eols(eol)),
         Action::Activate(id) => show(a, id),
         Action::Changed(id) => {
@@ -577,16 +741,32 @@ fn perform(a: &App, action: Action) {
             }
         }
         Action::AskSaveBeforeClose(id) => {
-            let Some(name) = a.tabs.borrow().get(id).map(Tab::name) else { return };
-            let reply = ask(a, &format!("Save changes to {name}?"), "", "Save", "Don't save");
+            let Some(name) = a.tabs.borrow().get(id).map(Tab::name) else {
+                return;
+            };
+            let reply = ask(
+                a,
+                &format!("Save changes to {name}?"),
+                "",
+                "Save",
+                "Don't save",
+            );
             command(a, |t| t.close_reply(id, reply));
         }
         Action::AskSaveAll(ids) => {
             let names: Vec<String> = {
                 let tabs = a.tabs.borrow();
-                ids.iter().filter_map(|id| tabs.get(*id).map(Tab::name)).collect()
+                ids.iter()
+                    .filter_map(|id| tabs.get(*id).map(Tab::name))
+                    .collect()
             };
-            let reply = ask(a, "Save changes before closing?", &names.join("\n"), "Save all", "Discard all");
+            let reply = ask(
+                a,
+                "Save changes before closing?",
+                &names.join("\n"),
+                "Save all",
+                "Discard all",
+            );
             command(a, |t| t.close_window_reply(reply));
         }
         Action::Watch(path) => disk::watch(a, &path),
@@ -601,7 +781,10 @@ fn perform(a: &App, action: Action) {
             }
         }
         Action::AddRecent(path) => recent::add(a, &path),
-        Action::OpenInAnotherTab { name } => message(a, &format!("{name} is open in another tab. Close it first.")),
+        Action::OpenInAnotherTab { name } => message(
+            a,
+            &format!("{name} is open in another tab. Close it first."),
+        ),
         Action::Flash(note) => {
             let status = {
                 let mut ui = a.ui.borrow_mut();
@@ -641,7 +824,9 @@ fn stash_view(a: &App) {
 
 /// Swap Tab `id`'s document into the editor and put back its view.
 fn show(a: &App, id: TabId) {
-    let Some(EditorDoc(doc)) = a.tabs.borrow().get(id).and_then(Tab::document) else { return };
+    let Some(EditorDoc(doc)) = a.tabs.borrow().get(id).and_then(Tab::document) else {
+        return;
+    };
     stash_view(a);
     a.editor.show_document(doc);
     a.shown.set(Some(id));
@@ -688,7 +873,12 @@ fn arm_restyle(a: &App) {
 /// The shown Tab's line ending, read-only state and wrap. Only a change is
 /// sent: `Changed` can arrive from inside Scintilla's own SCN_MODIFIED.
 fn apply_settings(a: &App, id: TabId) {
-    let Some(settings) = a.tabs.borrow().get(id).map(|t| (t.eol(), t.read_only(), t.wrap_allowed())) else {
+    let Some(settings) = a
+        .tabs
+        .borrow()
+        .get(id)
+        .map(|t| (t.eol(), t.read_only(), t.wrap_allowed()))
+    else {
         return;
     };
     if a.applied.replace(Some(settings)) == Some(settings) {
@@ -725,7 +915,9 @@ fn in_document(a: &App, id: TabId, f: impl FnOnce(&Editor)) {
     if a.shown.get() == Some(id) {
         return quietly(a, f);
     }
-    let Some(EditorDoc(doc)) = a.tabs.borrow().get(id).and_then(Tab::document) else { return };
+    let Some(EditorDoc(doc)) = a.tabs.borrow().get(id).and_then(Tab::document) else {
+        return;
+    };
     with_document(a, doc, f);
 }
 
@@ -739,7 +931,11 @@ fn load(a: &App, id: TabId, path: &Path, encoding: Option<Encoding>, keep_caret_
         Ok(read) => read,
         Err(e) => {
             // A reread that fails keeps the text; only a Tab that never showed it says why.
-            let first = a.tabs.borrow().get(id).is_some_and(|t| t.document().is_none());
+            let first = a
+                .tabs
+                .borrow()
+                .get(id)
+                .is_some_and(|t| t.document().is_none());
             // The outcome goes in before the message box pumps messages.
             command(a, |t| t.load_failed(id));
             if first {
@@ -770,7 +966,12 @@ fn load(a: &App, id: TabId, path: &Path, encoding: Option<Encoding>, keep_caret_
         e.fill(&decoded.text, large);
         if keep_caret_line {
             let start = e.line_start(view.caret_line);
-            view = ViewState { anchor: start, caret: start, x_offset: 0, ..view };
+            view = ViewState {
+                anchor: start,
+                caret: start,
+                x_offset: 0,
+                ..view
+            };
         }
     });
     adopt(a, id, doc);
@@ -782,7 +983,14 @@ fn load(a: &App, id: TabId, path: &Path, encoding: Option<Encoding>, keep_caret_
     }
     let (encoding, eol, lossy) = (decoded.encoding, decoded.eol, decoded.lossy);
     let file_id = files::file_id(path);
-    let file = LoadedFile { encoding, eol, stat, file_id, text_len: decoded.text.len(), lossy };
+    let file = LoadedFile {
+        encoding,
+        eol,
+        stat,
+        file_id,
+        text_len: decoded.text.len(),
+        lossy,
+    };
     #[cfg(debug_assertions)]
     LOADS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     command(a, |t| t.loaded(id, file));
@@ -795,13 +1003,22 @@ fn read_file(path: &Path) -> std::io::Result<(Vec<u8>, FileStat)> {
     let meta = file.metadata()?;
     let mut bytes = Vec::with_capacity(meta.len() as usize);
     file.read_to_end(&mut bytes)?;
-    Ok((bytes, FileStat { size: meta.len(), modified: meta.modified()? }))
+    Ok((
+        bytes,
+        FileStat {
+            size: meta.len(),
+            modified: meta.modified()?,
+        },
+    ))
 }
 
 /// `path` on disk now, for `Tabs::disk_event`; `None` if it is gone.
 fn stat_of(path: &Path) -> Option<FileStat> {
     let meta = std::fs::metadata(path).ok()?;
-    Some(FileStat { size: meta.len(), modified: meta.modified().unwrap_or(SystemTime::UNIX_EPOCH) })
+    Some(FileStat {
+        size: meta.len(),
+        modified: meta.modified().unwrap_or(SystemTime::UNIX_EPOCH),
+    })
 }
 
 /// A two-choice question with Cancel (spec §8): `save` / `discard` / Cancel.
@@ -812,10 +1029,17 @@ fn ask(a: &App, instruction: &str, content: &str, save: &str, discard: &str) -> 
     if headless() {
         return CloseReply::Cancel;
     }
-    let (instruction, content, save, discard) = (wide(instruction), wide(content), wide(save), wide(discard));
+    let (instruction, content, save, discard) =
+        (wide(instruction), wide(content), wide(save), wide(discard));
     let buttons = [
-        TASKDIALOG_BUTTON { nButtonID: SAVE, pszButtonText: PCWSTR(save.as_ptr()) },
-        TASKDIALOG_BUTTON { nButtonID: DISCARD, pszButtonText: PCWSTR(discard.as_ptr()) },
+        TASKDIALOG_BUTTON {
+            nButtonID: SAVE,
+            pszButtonText: PCWSTR(save.as_ptr()),
+        },
+        TASKDIALOG_BUTTON {
+            nButtonID: DISCARD,
+            pszButtonText: PCWSTR(discard.as_ptr()),
+        },
     ];
     let config = TASKDIALOGCONFIG {
         cbSize: std::mem::size_of::<TASKDIALOGCONFIG>() as u32,
@@ -824,7 +1048,11 @@ fn ask(a: &App, instruction: &str, content: &str, save: &str, discard: &str) -> 
         dwCommonButtons: TDCBF_CANCEL_BUTTON,
         pszWindowTitle: w!("scrivi"),
         pszMainInstruction: PCWSTR(instruction.as_ptr()),
-        pszContent: if content.len() > 1 { PCWSTR(content.as_ptr()) } else { PCWSTR::null() },
+        pszContent: if content.len() > 1 {
+            PCWSTR(content.as_ptr())
+        } else {
+            PCWSTR::null()
+        },
         cButtons: buttons.len() as u32,
         pButtons: buttons.as_ptr(),
         nDefaultButton: SAVE,
@@ -848,7 +1076,12 @@ fn message(a: &App, text: &str) {
     }
     let text = wide(text);
     unsafe {
-        MessageBoxW(Some(a.hwnd), PCWSTR(text.as_ptr()), w!("scrivi"), MB_OK | MB_ICONINFORMATION);
+        MessageBoxW(
+            Some(a.hwnd),
+            PCWSTR(text.as_ptr()),
+            w!("scrivi"),
+            MB_OK | MB_ICONINFORMATION,
+        );
     }
 }
 
@@ -890,7 +1123,8 @@ fn refresh_status(a: &App) {
         (changed, refit, ui.layout.status)
     };
     if refit {
-        a.editor.fit_line_numbers(unsafe { GetDpiForWindow(a.hwnd) });
+        a.editor
+            .fit_line_numbers(unsafe { GetDpiForWindow(a.hwnd) });
     }
     if changed {
         invalidate(a, Some(status));
@@ -900,7 +1134,13 @@ fn refresh_status(a: &App) {
 fn status_of(ui: &Ui, tabs: &Tabs) -> Status {
     let tab = tabs.active().and_then(|id| tabs.get(id));
     let (encoding, eol) = tab.map_or(textfile::NEW_FILE, |t| (t.encoding(), t.eol()));
-    let mut status = Status::source(ui.caret.line, ui.caret.col, eol.name(), encoding.name(), ui.zoom);
+    let mut status = Status::source(
+        ui.caret.line,
+        ui.caret.col,
+        eol.name(),
+        encoding.name(),
+        ui.zoom,
+    );
     if let Some(note) = ui.flash.or_else(|| tab.and_then(Tab::status_note)) {
         status.note = note.text().to_string();
     }
@@ -908,7 +1148,12 @@ fn status_of(ui: &Ui, tabs: &Tabs) -> Status {
 }
 
 fn invalidate(a: &App, r: Option<Rect>) {
-    let rect = r.map(|r| RECT { left: r.left, top: r.top, right: r.right, bottom: r.bottom });
+    let rect = r.map(|r| RECT {
+        left: r.left,
+        top: r.top,
+        right: r.right,
+        bottom: r.bottom,
+    });
     unsafe {
         let _ = InvalidateRect(Some(a.hwnd), rect.as_ref().map(|r| r as *const RECT), false);
     }
@@ -933,7 +1178,11 @@ fn relayout(a: &App) {
         let tabs = a.tabs.borrow();
         let active = tabs.active();
         let at = tabs.iter().position(|t| Some(t.id()) == active);
-        let notice_h = if notice::spec(&tabs).is_some() { crate::chrome::notice::HEIGHT } else { 0.0 };
+        let notice_h = if notice::spec(&tabs).is_some() {
+            crate::chrome::notice::HEIGHT
+        } else {
+            0.0
+        };
         (tabs.iter().count(), active, at, notice_h)
     };
     let editor = {
@@ -956,7 +1205,10 @@ fn relayout(a: &App) {
         if ui.revealed != active || ui.layout.status.right != rc.right {
             ui.revealed = active;
             if let Some(i) = active_at {
-                layout = Layout::new(&Frame { tab_scroll: layout.reveal(i), ..frame });
+                layout = Layout::new(&Frame {
+                    tab_scroll: layout.reveal(i),
+                    ..frame
+                });
             }
         }
         ui.tab_scroll = layout.tab_scroll;
@@ -1032,7 +1284,9 @@ fn click(a: &App, hit: Hit) {
         Hit::ScrollLeft | Hit::ScrollRight => {
             {
                 let mut ui = a.ui.borrow_mut();
-                ui.tab_scroll = ui.layout.scroll_step(if hit == Hit::ScrollLeft { -1 } else { 1 });
+                ui.tab_scroll = ui
+                    .layout
+                    .scroll_step(if hit == Hit::ScrollLeft { -1 } else { 1 });
             }
             relayout(a);
             return rehover(a);
@@ -1040,7 +1294,12 @@ fn click(a: &App, hit: Hit) {
         _ => return,
     };
     unsafe {
-        let _ = PostMessageW(Some(hwnd), WM_SYSCOMMAND, WPARAM(command_id as usize), LPARAM(0));
+        let _ = PostMessageW(
+            Some(hwnd),
+            WM_SYSCOMMAND,
+            WPARAM(command_id as usize),
+            LPARAM(0),
+        );
     }
 }
 
@@ -1061,10 +1320,18 @@ fn set_hover(a: &App, hover: Option<Hit>) {
 fn update_tip(a: &App) {
     let (tip, rect) = {
         let ui = a.ui.borrow();
-        let tip = ui.hover.and_then(Hit::tab).and_then(|i| tab_at(a, i).map(|id| (id, i)));
+        let tip = ui
+            .hover
+            .and_then(Hit::tab)
+            .and_then(|i| tab_at(a, i).map(|id| (id, i)));
         let rect = tip.map_or(RECT::default(), |(_, i)| {
             let (t, s) = (ui.layout.tabs[i], ui.layout.strip);
-            RECT { left: t.left.max(s.left), top: t.top, right: t.right.min(s.right), bottom: t.bottom }
+            RECT {
+                left: t.left.max(s.left),
+                top: t.top,
+                right: t.right.min(s.right),
+                bottom: t.bottom,
+            }
         });
         (tip.map(|(id, _)| id), rect)
     };
@@ -1075,7 +1342,10 @@ fn update_tip(a: &App) {
     let text = tip
         .and_then(|id| {
             let tabs = a.tabs.borrow();
-            tabs.get(id).map(|t| t.path().map_or_else(|| t.name(), |p| p.display().to_string()))
+            tabs.get(id).map(|t| {
+                t.path()
+                    .map_or_else(|| t.name(), |p| p.display().to_string())
+            })
         })
         .unwrap_or_default();
     let mut text = wide(&text);
@@ -1098,7 +1368,11 @@ fn update_tip(a: &App) {
 fn track_leave(a: &App, nonclient: bool) {
     let already = {
         let mut ui = a.ui.borrow_mut();
-        let flag = if nonclient { &mut ui.tracking_nc } else { &mut ui.tracking };
+        let flag = if nonclient {
+            &mut ui.tracking_nc
+        } else {
+            &mut ui.tracking
+        };
         std::mem::replace(flag, true)
     };
     if already {
@@ -1106,7 +1380,11 @@ fn track_leave(a: &App, nonclient: bool) {
     }
     let mut tme = TRACKMOUSEEVENT {
         cbSize: std::mem::size_of::<TRACKMOUSEEVENT>() as u32,
-        dwFlags: if nonclient { TME_LEAVE | TME_NONCLIENT } else { TME_LEAVE },
+        dwFlags: if nonclient {
+            TME_LEAVE | TME_NONCLIENT
+        } else {
+            TME_LEAVE
+        },
         hwndTrack: a.hwnd,
         dwHoverTime: 0,
     };
@@ -1124,10 +1402,18 @@ fn paint(a: &App) {
             let ui = a.ui.borrow();
             let tabs = a.tabs.borrow();
             let status = status_of(&ui, &tabs);
-            let names: Vec<(String, bool, bool)> =
-                tabs.iter().map(|t| (t.name(), Some(t.id()) == tabs.active(), t.unsaved())).collect();
-            let strip: Vec<TabView> =
-                names.iter().map(|(name, active, unsaved)| TabView { name, active: *active, unsaved: *unsaved }).collect();
+            let names: Vec<(String, bool, bool)> = tabs
+                .iter()
+                .map(|t| (t.name(), Some(t.id()) == tabs.active(), t.unsaved()))
+                .collect();
+            let strip: Vec<TabView> = names
+                .iter()
+                .map(|(name, active, unsaved)| TabView {
+                    name,
+                    active: *active,
+                    unsaved: *unsaved,
+                })
+                .collect();
             let (menu_focus, access_keys) = menu::painted();
             let notice = notice::spec(&tabs);
             let view = View {
@@ -1152,10 +1438,20 @@ fn paint(a: &App) {
     // paint: ask for one, a few times at most.
     let retry = {
         let mut ui = a.ui.borrow_mut();
-        ui.paint_failures = if painted.is_ok() { 0 } else { ui.paint_failures + 1 };
+        ui.paint_failures = if painted.is_ok() {
+            0
+        } else {
+            ui.paint_failures + 1
+        };
         (painted.is_err() && ui.paint_failures <= PAINT_RETRIES).then(|| {
             let l = &ui.layout;
-            [Rect { bottom: l.editor.top, ..l.title }, l.status]
+            [
+                Rect {
+                    bottom: l.editor.top,
+                    ..l.title
+                },
+                l.status,
+            ]
         })
     };
     for band in retry.into_iter().flatten() {
@@ -1186,7 +1482,10 @@ unsafe fn calc_size(hwnd: HWND, lp: LPARAM) -> LRESULT {
 /// for good: leave it a 1 px strip on its edge, as Chromium does.
 unsafe fn leave_room_for_autohide_bars(hwnd: HWND, r: &mut RECT) {
     unsafe {
-        let mut mi = MONITORINFO { cbSize: std::mem::size_of::<MONITORINFO>() as u32, ..Default::default() };
+        let mut mi = MONITORINFO {
+            cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+            ..Default::default()
+        };
         if !GetMonitorInfoW(MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST), &mut mi).as_bool() {
             return;
         }
@@ -1215,7 +1514,9 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
         if msg == WM_NCCALCSIZE && wp.0 != 0 {
             return calc_size(hwnd, lp);
         }
-        let Some(a) = app() else { return DefWindowProcW(hwnd, msg, wp, lp) };
+        let Some(a) = app() else {
+            return DefWindowProcW(hwnd, msg, wp, lp);
+        };
         match msg {
             WM_NCHITTEST => {
                 let (x, y) = xy(lp);
@@ -1238,7 +1539,9 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                     ui.tracking_nc = false;
                     // A press holds the capture: it keeps its hover until released.
                     if ui.pressed.is_none() {
-                        ui.hover = ui.hover.filter(|h| Hit::caption_button(h.nc_code()).is_none());
+                        ui.hover = ui
+                            .hover
+                            .filter(|h| Hit::caption_button(h.nc_code()).is_none());
                     }
                     ui.layout.title
                 };
@@ -1276,7 +1579,9 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                             command(a, |t| t.activate(id));
                         }
                     }
-                    Hit::TabClose(_) | Hit::NewTab | Hit::ScrollLeft | Hit::ScrollRight => press(a, hit),
+                    Hit::TabClose(_) | Hit::NewTab | Hit::ScrollLeft | Hit::ScrollRight => {
+                        press(a, hit)
+                    }
                     Hit::Notice => notice::press(a, x, y),
                     // A native menu bar opens on the way down.
                     Hit::Menu(i) => menu::open(a, i, false),
@@ -1353,11 +1658,17 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                 }
                 match (wp.0 & 0xffff) as u16 {
                     cmd::NEW_TAB => command(a, Tabs::new_untitled),
-                    cmd::CLOSE_TAB => command(a, |t| t.active().map_or_else(Vec::new, |id| t.close(id))),
+                    cmd::CLOSE_TAB => {
+                        command(a, |t| t.active().map_or_else(Vec::new, |id| t.close(id)))
+                    }
                     cmd::NEXT_TAB => command(a, Tabs::next),
                     cmd::PREV_TAB => command(a, Tabs::prev),
-                    cmd::RENDERED_VIEW => command(a, |t| t.active().map_or_else(Vec::new, |id| t.toggle_view(id))),
-                    cmd::SHOW_SOURCE => command(a, |t| t.active().map_or_else(Vec::new, |id| t.show_source(id))),
+                    cmd::RENDERED_VIEW => command(a, |t| {
+                        t.active().map_or_else(Vec::new, |id| t.toggle_view(id))
+                    }),
+                    cmd::SHOW_SOURCE => command(a, |t| {
+                        t.active().map_or_else(Vec::new, |id| t.show_source(id))
+                    }),
                     id => {
                         if !menu::run(a, id) {
                             return DefWindowProcW(hwnd, msg, wp, lp);
@@ -1392,7 +1703,10 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                 } else {
                     let path = {
                         let mut rechecks = a.rechecks.borrow_mut();
-                        rechecks.iter().position(|(t, _)| *t == timer).map(|i| rechecks.remove(i).1)
+                        rechecks
+                            .iter()
+                            .position(|(t, _)| *t == timer)
+                            .map(|i| rechecks.remove(i).1)
                     };
                     if let Some(path) = path {
                         let on_disk = stat_of(&path);
@@ -1424,11 +1738,17 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             WM_GETMINMAXINFO => {
                 let info = &mut *(lp.0 as *mut MINMAXINFO);
                 let s = scale_of(hwnd);
-                info.ptMinTrackSize = POINT { x: (MIN_W * s) as i32, y: (MIN_H * s) as i32 };
+                info.ptMinTrackSize = POINT {
+                    x: (MIN_W * s) as i32,
+                    y: (MIN_H * s) as i32,
+                };
                 LRESULT(0)
             }
             WM_DPICHANGED => {
-                let _ = a.painter.borrow_mut().set_scale((wp.0 & 0xffff) as f32 / 96.0);
+                let _ = a
+                    .painter
+                    .borrow_mut()
+                    .set_scale((wp.0 & 0xffff) as f32 / 96.0);
                 let r = &*(lp.0 as *const RECT);
                 let _ = SetWindowPos(
                     hwnd,
@@ -1513,7 +1833,10 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                 if rendered_view::behind_page() {
                     return LRESULT(0);
                 }
-                let wanted = a.shown.get().is_some_and(|id| a.tabs.borrow().get(id).is_some_and(Tab::spell_checked));
+                let wanted = a
+                    .shown
+                    .get()
+                    .is_some_and(|id| a.tabs.borrow().get(id).is_some_and(Tab::spell_checked));
                 a.spell.context_menu(&a.editor, hwnd, lp, wanted);
                 LRESULT(0)
             }
@@ -1596,9 +1919,31 @@ mod cmd_tests {
     #[test]
     fn every_command_id_and_menu_range_is_distinct() {
         let mut ids = vec![
-            NEW_TAB, CLOSE_TAB, NEXT_TAB, PREV_TAB, OPEN, SAVE, SAVE_AS, EXIT, UNDO, REDO, CUT, COPY, PASTE,
-            SELECT_ALL, FIND, REPLACE, GO_TO_LINE, ENCODING_KEEP, REOPEN, RENDERED_VIEW, WORD_WRAP, ZOOM_IN,
-            ZOOM_OUT, ZOOM_RESET, SHOW_SOURCE,
+            NEW_TAB,
+            CLOSE_TAB,
+            NEXT_TAB,
+            PREV_TAB,
+            OPEN,
+            SAVE,
+            SAVE_AS,
+            EXIT,
+            UNDO,
+            REDO,
+            CUT,
+            COPY,
+            PASTE,
+            SELECT_ALL,
+            FIND,
+            REPLACE,
+            GO_TO_LINE,
+            ENCODING_KEEP,
+            REOPEN,
+            RENDERED_VIEW,
+            WORD_WRAP,
+            ZOOM_IN,
+            ZOOM_OUT,
+            ZOOM_RESET,
+            SHOW_SOURCE,
         ];
         ids.extend((0..Encoding::MENU.len() as u16).map(|i| ENCODING + i));
         ids.extend((0..Eol::MENU.len() as u16).map(|i| EOL + i));

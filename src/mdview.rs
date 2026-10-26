@@ -177,7 +177,9 @@ pub fn apply(e: &Editor) {
     // SAFETY: Scintilla's contiguous text, `len` bytes, valid until the next
     // edit; nothing below changes the text.
     let bytes = unsafe { std::slice::from_raw_parts(ptr, len) };
-    let Ok(text) = std::str::from_utf8(bytes) else { return };
+    let Ok(text) = std::str::from_utf8(bytes) else {
+        return;
+    };
     let runs = mdstyle::style_runs(text);
     e.call(SCI_SETINDICATORCURRENT, INDIC_STRIKE_ID, 0);
     e.call(SCI_INDICATORCLEARRANGE, 0, len as isize);
@@ -187,7 +189,11 @@ pub fn apply(e: &Editor) {
     }
     for (range, style) in &runs {
         if *style == Style::Strike {
-            e.call(SCI_INDICATORFILLRANGE, range.start, (range.end - range.start) as isize);
+            e.call(
+                SCI_INDICATORFILLRANGE,
+                range.start,
+                (range.end - range.start) as isize,
+            );
         }
     }
 }
@@ -239,7 +245,11 @@ mod tests {
         let numbers: Vec<u8> = all.iter().map(|s| style_number(*s)).collect();
         for (i, n) in numbers.iter().enumerate() {
             assert!(*n < 32, "{:?} -> {n}", all[i]);
-            assert!(numbers[i + 1..].iter().all(|m| m != n), "{:?} shares {n}", all[i]);
+            assert!(
+                numbers[i + 1..].iter().all(|m| m != n),
+                "{:?} shares {n}",
+                all[i]
+            );
         }
     }
 
@@ -253,16 +263,31 @@ mod tests {
 
     #[test]
     fn segments_fill_gaps_with_plain() {
-        let runs = vec![(2..4, Style::Bold), (4..5, Style::Marker), (8..9, Style::Link)];
+        let runs = vec![
+            (2..4, Style::Bold),
+            (4..5, Style::Marker),
+            (8..9, Style::Link),
+        ];
         assert_eq!(
             segments(10, &runs),
-            vec![(2, S_PLAIN), (2, S_BOLD), (1, S_MARKER), (3, S_PLAIN), (1, S_LINK), (1, S_PLAIN)]
+            vec![
+                (2, S_PLAIN),
+                (2, S_BOLD),
+                (1, S_MARKER),
+                (3, S_PLAIN),
+                (1, S_LINK),
+                (1, S_PLAIN)
+            ]
         );
     }
 
     #[test]
     fn segments_always_cover_the_whole_text() {
-        for text in ["", "plain", "# Title\n\n**b** _i_ `c` [l](http://x.y)\n> q\n- [x] t\n```\ncode\n```\n"] {
+        for text in [
+            "",
+            "plain",
+            "# Title\n\n**b** _i_ `c` [l](http://x.y)\n> q\n- [x] t\n```\ncode\n```\n",
+        ] {
             let runs = mdstyle::style_runs(text);
             let total: usize = segments(text.len(), &runs).iter().map(|(n, _)| n).sum();
             assert_eq!(total, text.len(), "{text:?}");
@@ -351,6 +376,9 @@ let x = 1;
         let t = std::time::Instant::now();
         apply(&e);
         let total = t.elapsed();
-        eprintln!("900 KB: {} runs; parse {parse:?}; full pass (parse + apply) {total:?}", runs.len());
+        eprintln!(
+            "900 KB: {} runs; parse {parse:?}; full pass (parse + apply) {total:?}",
+            runs.len()
+        );
     }
 }

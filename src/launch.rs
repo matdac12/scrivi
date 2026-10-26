@@ -48,7 +48,11 @@ pub fn decide(args: &[String], resident_running: bool) -> Decision {
             s => paths.push(PathBuf::from(s)),
         }
     }
-    let request = if paths.is_empty() { Request::NewTab } else { Request::Open(paths) };
+    let request = if paths.is_empty() {
+        Request::NewTab
+    } else {
+        Request::Open(paths)
+    };
     if resident_running {
         Decision::HandOff(request)
     } else {
@@ -92,7 +96,10 @@ fn absolutize(request: Request) -> Request {
     match request {
         Request::NewTab => Request::NewTab,
         Request::Open(paths) => Request::Open(
-            paths.into_iter().map(|p| std::path::absolute(&p).unwrap_or(p)).collect(),
+            paths
+                .into_iter()
+                .map(|p| std::path::absolute(&p).unwrap_or(p))
+                .collect(),
         ),
     }
 }
@@ -135,8 +142,13 @@ fn relaunch_through_shell() -> bool {
         return false;
     }
     let windir = std::env::var("WINDIR").unwrap_or_else(|_| "C:\\Windows".into());
-    let Ok(exe) = std::env::current_exe() else { return false };
-    std::process::Command::new(format!("{windir}\\explorer.exe")).arg(exe).spawn().is_ok()
+    let Ok(exe) = std::env::current_exe() else {
+        return false;
+    };
+    std::process::Command::new(format!("{windir}\\explorer.exe"))
+        .arg(exe)
+        .spawn()
+        .is_ok()
 }
 
 fn wait_for_resident(timeout: Duration) -> Option<HWND> {
@@ -205,7 +217,9 @@ pub fn run(args: &[String]) -> i32 {
                 }
                 return hand_off_when_up(&request);
             }
-            let Ok(mutex) = (unsafe { CreateMutexW(None, true, proto::mutex()) }) else { return 1 };
+            let Ok(mutex) = (unsafe { CreateMutexW(None, true, proto::mutex()) }) else {
+                return 1;
+            };
             if unsafe { GetLastError() } == ERROR_ALREADY_EXISTS {
                 // Another launch won the race and is still creating its Window.
                 unsafe {
@@ -242,7 +256,10 @@ mod tests {
     #[test]
     fn one_path_opens_it() {
         assert_eq!(d(&["a.md"], true), Decision::HandOff(open(&["a.md"])));
-        assert_eq!(d(&["a.md"], false), Decision::BecomeResident(open(&["a.md"])));
+        assert_eq!(
+            d(&["a.md"], false),
+            Decision::BecomeResident(open(&["a.md"]))
+        );
     }
 
     #[test]
@@ -269,7 +286,10 @@ mod tests {
     fn unknown_flags_and_empty_args_are_ignored() {
         assert_eq!(d(&[""], true), Decision::HandOff(Request::NewTab));
         assert_eq!(d(&["--bogus"], true), Decision::HandOff(Request::NewTab));
-        assert_eq!(d(&["--bogus", "a.md"], false), Decision::BecomeResident(open(&["a.md"])));
+        assert_eq!(
+            d(&["--bogus", "a.md"], false),
+            Decision::BecomeResident(open(&["a.md"]))
+        );
     }
 
     #[test]

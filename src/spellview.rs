@@ -7,8 +7,8 @@ use windows::core::PCWSTR;
 use windows::Win32::Foundation::{HWND, LPARAM, POINT};
 use windows::Win32::Graphics::Gdi::{ClientToScreen, ScreenToClient};
 use windows::Win32::UI::WindowsAndMessaging::{
-    AppendMenuW, CreatePopupMenu, DestroyMenu, TrackPopupMenu, MF_DISABLED, MF_GRAYED, MF_SEPARATOR, MF_STRING,
-    TPM_RETURNCMD, TPM_RIGHTBUTTON,
+    AppendMenuW, CreatePopupMenu, DestroyMenu, TrackPopupMenu, MF_DISABLED, MF_GRAYED,
+    MF_SEPARATOR, MF_STRING, TPM_RETURNCMD, TPM_RIGHTBUTTON,
 };
 
 use crate::editor::sci::*;
@@ -78,11 +78,15 @@ pub struct SpellView {
 impl SpellView {
     /// Opens Italian and English; either alone if the other isn't installed.
     pub fn new() -> SpellView {
-        SpellView { checkers: OnceCell::new(), checked: Cell::new(None) }
+        SpellView {
+            checkers: OnceCell::new(),
+            checked: Cell::new(None),
+        }
     }
 
     fn checkers(&self) -> &Checkers {
-        self.checkers.get_or_init(|| Checkers::open(&spell::LANGUAGES))
+        self.checkers
+            .get_or_init(|| Checkers::open(&spell::LANGUAGES))
     }
 
     /// Check the shown document's visible lines (`enabled` is
@@ -98,7 +102,11 @@ impl SpellView {
         let ptr = e.call(SCI_GETCHARACTERPOINTER, 0, 0) as *const u8;
         // SAFETY: Scintilla's contiguous text, `len` bytes, valid until the next
         // edit; nothing below changes the text.
-        let text = if ptr.is_null() { None } else { std::str::from_utf8(unsafe { std::slice::from_raw_parts(ptr, len) }).ok() };
+        let text = if ptr.is_null() {
+            None
+        } else {
+            std::str::from_utf8(unsafe { std::slice::from_raw_parts(ptr, len) }).ok()
+        };
         let Some(text) = text else {
             self.checked.set(None);
             e.call(SCI_INDICATORCLEARRANGE, 0, len as isize);
@@ -116,7 +124,11 @@ impl SpellView {
         e.call(SCI_INDICATORCLEARRANGE, start, (end - start) as isize);
         for word in spell::words(text, &runs, start..end) {
             if self.checkers().is_misspelled(&text[word.clone()]) {
-                e.call(SCI_INDICATORFILLRANGE, word.start, (word.end - word.start) as isize);
+                e.call(
+                    SCI_INDICATORFILLRANGE,
+                    word.start,
+                    (word.end - word.start) as isize,
+                );
             }
         }
         self.checked.set(Some((from, to)));
@@ -124,7 +136,9 @@ impl SpellView {
 
     /// The view has scrolled past the lines last checked.
     pub fn scrolled_away(&self, e: &Editor) -> bool {
-        let Some((from, to)) = self.checked.get() else { return false };
+        let Some((from, to)) = self.checked.get() else {
+            return false;
+        };
         let (first, last) = visible_lines(e);
         first < from || last > to
     }
@@ -133,7 +147,11 @@ impl SpellView {
     /// -1 from the keyboard). Holds no borrow of the app while the menu runs.
     pub fn context_menu(&self, e: &Editor, parent: HWND, lp: LPARAM, enabled: bool) {
         let (screen, pos) = locate(e, lp);
-        let flagged = if enabled { self.flagged_word_at(e, pos) } else { None };
+        let flagged = if enabled {
+            self.flagged_word_at(e, pos)
+        } else {
+            None
+        };
         // Right-click selects a flagged word; elsewhere it moves the caret
         // unless it lands inside the selection.
         match &flagged {
@@ -141,22 +159,33 @@ impl SpellView {
                 e.call(SCI_SETSEL, *start, *end as isize);
             }
             None if pos >= 0 => {
-                let (s, t) = (e.call(SCI_GETSELECTIONSTART, 0, 0), e.call(SCI_GETSELECTIONEND, 0, 0));
+                let (s, t) = (
+                    e.call(SCI_GETSELECTIONSTART, 0, 0),
+                    e.call(SCI_GETSELECTIONEND, 0, 0),
+                );
                 if pos < s || pos > t {
                     e.call(SCI_GOTOPOS, pos as usize, 0);
                 }
             }
             None => {}
         }
-        let suggestions = flagged.as_ref().map(|(_, _, w)| self.checkers().suggest(w, MAX_SUGGESTIONS)).unwrap_or_default();
+        let suggestions = flagged
+            .as_ref()
+            .map(|(_, _, w)| self.checkers().suggest(w, MAX_SUGGESTIONS))
+            .unwrap_or_default();
         let read_only = e.call(SCI_GETREADONLY, 0, 0) != 0;
-        let has_selection = e.call(SCI_GETSELECTIONSTART, 0, 0) != e.call(SCI_GETSELECTIONEND, 0, 0);
+        let has_selection =
+            e.call(SCI_GETSELECTIONSTART, 0, 0) != e.call(SCI_GETSELECTIONEND, 0, 0);
 
         let choice = unsafe {
             let Ok(menu) = CreatePopupMenu() else { return };
             let add = |id: usize, text: &str, on: bool| {
                 let wide: Vec<u16> = text.encode_utf16().chain(Some(0)).collect();
-                let state = if on { MF_STRING } else { MF_STRING | MF_GRAYED | MF_DISABLED };
+                let state = if on {
+                    MF_STRING
+                } else {
+                    MF_STRING | MF_GRAYED | MF_DISABLED
+                };
                 let _ = AppendMenuW(menu, state, id, PCWSTR(wide.as_ptr()));
             };
             let separator = || {
@@ -173,14 +202,31 @@ impl SpellView {
                 add(ID_ADD, "Add to dictionary", true);
                 separator();
             }
-            add(ID_UNDO, "&Undo", !read_only && e.call(SCI_CANUNDO, 0, 0) != 0);
+            add(
+                ID_UNDO,
+                "&Undo",
+                !read_only && e.call(SCI_CANUNDO, 0, 0) != 0,
+            );
             separator();
             add(ID_CUT, "Cu&t", !read_only && has_selection);
             add(ID_COPY, "&Copy", has_selection);
-            add(ID_PASTE, "&Paste", !read_only && e.call(SCI_CANPASTE, 0, 0) != 0);
+            add(
+                ID_PASTE,
+                "&Paste",
+                !read_only && e.call(SCI_CANPASTE, 0, 0) != 0,
+            );
             separator();
             add(ID_SELECT_ALL, "Select &all", true);
-            let id = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON, screen.x, screen.y, None, parent, None).0;
+            let id = TrackPopupMenu(
+                menu,
+                TPM_RETURNCMD | TPM_RIGHTBUTTON,
+                screen.x,
+                screen.y,
+                None,
+                parent,
+                None,
+            )
+            .0;
             let _ = DestroyMenu(menu);
             id as usize
         };
@@ -211,8 +257,13 @@ impl SpellView {
             n if n >= ID_SUGGESTION => {
                 // The edit marks the Tab unsaved and re-checks after the pause.
                 // The menu pumps messages: only replace if the word is still there.
-                if let (Some((start, end, word)), Some(s)) = (&flagged, suggestions.get(n - ID_SUGGESTION)) {
-                    if self.flagged_word_at(e, *start as isize).is_some_and(|(s2, e2, w2)| (s2, e2) == (*start, *end) && w2 == *word) {
+                if let (Some((start, end, word)), Some(s)) =
+                    (&flagged, suggestions.get(n - ID_SUGGESTION))
+                {
+                    if self
+                        .flagged_word_at(e, *start as isize)
+                        .is_some_and(|(s2, e2, w2)| (s2, e2) == (*start, *end) && w2 == *word)
+                    {
                         e.call(SCI_SETTARGETRANGE, *start, *end as isize);
                         e.call(SCI_REPLACETARGET, s.len(), s.as_ptr() as isize);
                     }
@@ -245,20 +296,26 @@ fn visible_lines(e: &Editor) -> (isize, isize) {
     let top = e.call(SCI_GETFIRSTVISIBLELINE, 0, 0);
     let on_screen = e.call(SCI_LINESONSCREEN, 0, 0);
     let first = e.call(SCI_DOCLINEFROMVISIBLE, top as usize, 0);
-    let last = e.call(SCI_DOCLINEFROMVISIBLE, (top + on_screen) as usize, 0).min(e.call(SCI_GETLINECOUNT, 0, 0) - 1);
+    let last = e
+        .call(SCI_DOCLINEFROMVISIBLE, (top + on_screen) as usize, 0)
+        .min(e.call(SCI_GETLINECOUNT, 0, 0) - 1);
     (first, last)
 }
 
 /// Where a `WM_CONTEXTMENU` points: the screen point, and the document
 /// position of the character there (-1 if none).
 fn locate(e: &Editor, lp: LPARAM) -> (POINT, isize) {
-    let (x, y) = ((lp.0 & 0xffff) as i16 as i32, ((lp.0 >> 16) & 0xffff) as i16 as i32);
+    let (x, y) = (
+        (lp.0 & 0xffff) as i16 as i32,
+        ((lp.0 >> 16) & 0xffff) as i16 as i32,
+    );
     if lp.0 as i32 == -1 {
         // From the keyboard: at the caret.
         let caret = e.call(SCI_GETCURRENTPOS, 0, 0);
         let mut pt = POINT {
             x: e.call(SCI_POINTXFROMPOSITION, 0, caret) as i32,
-            y: e.call(SCI_POINTYFROMPOSITION, 0, caret) as i32 + e.call(SCI_TEXTHEIGHT, 0, 0) as i32,
+            y: e.call(SCI_POINTYFROMPOSITION, 0, caret) as i32
+                + e.call(SCI_TEXTHEIGHT, 0, 0) as i32,
         };
         unsafe {
             let _ = ClientToScreen(e.hwnd(), &mut pt);
@@ -269,6 +326,10 @@ fn locate(e: &Editor, lp: LPARAM) -> (POINT, isize) {
     unsafe {
         let _ = ScreenToClient(e.hwnd(), &mut client);
     }
-    let pos = e.call(SCI_CHARPOSITIONFROMPOINTCLOSE, client.x as usize, client.y as isize);
+    let pos = e.call(
+        SCI_CHARPOSITIONFROMPOINTCLOSE,
+        client.x as usize,
+        client.y as isize,
+    );
     (POINT { x, y }, pos)
 }

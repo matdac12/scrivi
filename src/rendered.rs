@@ -41,7 +41,11 @@ pub fn to_html(markdown: &str, folder: &Path) -> Result<Page, TooLarge> {
 
 /// [`to_html`], with the user profile folder given: the mapped folder never
 /// climbs to it, nor to a drive root.
-pub fn to_html_within(markdown: &str, folder: &Path, home: Option<&Path>) -> Result<Page, TooLarge> {
+pub fn to_html_within(
+    markdown: &str,
+    folder: &Path,
+    home: Option<&Path>,
+) -> Result<Page, TooLarge> {
     if markdown.len() > MARKDOWN_LIMIT_BYTES {
         return Err(TooLarge);
     }
@@ -75,16 +79,18 @@ pub fn to_html_within(markdown: &str, folder: &Path, home: Option<&Path>) -> Res
         let images = Arc::clone(&images);
         let folder = folder.to_path_buf();
         let token = token.clone();
-        builder.attribute_filter(move |element, attribute, value| match (element, attribute) {
-            ("img", "src") => {
-                let path = resolve_image(&folder, value)?;
-                let mut images = images.lock().ok()?;
-                images.push(path);
-                Some(format!("/{token}/{}", images.len() - 1).into())
-            }
-            ("th" | "td", "style") => ALIGNMENTS.contains(&value).then_some(value.into()),
-            _ => Some(value.into()),
-        });
+        builder.attribute_filter(
+            move |element, attribute, value| match (element, attribute) {
+                ("img", "src") => {
+                    let path = resolve_image(&folder, value)?;
+                    let mut images = images.lock().ok()?;
+                    images.push(path);
+                    Some(format!("/{token}/{}", images.len() - 1).into())
+                }
+                ("th" | "td", "style") => ALIGNMENTS.contains(&value).then_some(value.into()),
+                _ => Some(value.into()),
+            },
+        );
     }
     let mut body = builder.clean(&raw).to_string();
     let images = std::mem::take(&mut *images.lock().map_err(|_| TooLarge)?);
@@ -121,7 +127,11 @@ pub fn opens_outside(uri: &str) -> bool {
 }
 
 /// The only `style` values kept: pulldown-cmark's table column alignments.
-const ALIGNMENTS: [&str; 3] = ["text-align: left", "text-align: center", "text-align: right"];
+const ALIGNMENTS: [&str; 3] = [
+    "text-align: left",
+    "text-align: center",
+    "text-align: right",
+];
 
 /// Give every heading an `id` as GitHub does, so `[see](#a-heading)` jumps:
 /// its text in lower case, punctuation dropped, spaces as `-`, and `-1`,
@@ -151,7 +161,11 @@ fn name_headings(events: &mut [Event]) {
             .collect();
         let next = next_suffix.entry(base.clone()).or_insert(0);
         let slug = loop {
-            let candidate = if *next == 0 { base.clone() } else { format!("{base}-{next}") };
+            let candidate = if *next == 0 {
+                base.clone()
+            } else {
+                format!("{base}-{next}")
+            };
             *next += 1;
             if used.insert(candidate.clone()) {
                 break candidate;
@@ -182,7 +196,10 @@ fn resolve_image(folder: &Path, src: &str) -> Option<PathBuf> {
     let src = src.split(['?', '#']).next().unwrap_or("");
     let relative = !src.is_empty()
         && !src.starts_with(SEPARATORS)
-        && !src.split(SEPARATORS).next().is_some_and(|first| first.contains(':'));
+        && !src
+            .split(SEPARATORS)
+            .next()
+            .is_some_and(|first| first.contains(':'));
     if !relative {
         return None;
     }
@@ -236,7 +253,9 @@ fn key(c: Component) -> String {
 /// `inner` is `outer` or lies inside it.
 fn within(inner: &Path, outer: &Path) -> bool {
     let mut inner = inner.components();
-    outer.components().all(|o| inner.next().is_some_and(|i| key(i) == key(o)))
+    outer
+        .components()
+        .all(|o| inner.next().is_some_and(|i| key(i) == key(o)))
 }
 
 /// The nearest common ancestor of `folder` and every image's folder. It
@@ -290,7 +309,9 @@ mod tests {
     use super::*;
 
     fn page(md: &str) -> String {
-        to_html(md, Path::new(r"C:\Users\me\Documents\notes")).unwrap().html
+        to_html(md, Path::new(r"C:\Users\me\Documents\notes"))
+            .unwrap()
+            .html
     }
 
     /// The document's own part of the page, without the stylesheet.
@@ -310,8 +331,17 @@ mod tests {
 
     #[test]
     fn a_relative_image_points_at_the_virtual_host_and_its_folder_is_mapped() {
-        let page = to_html("![cat](img/my%20cat.png)", Path::new(r"C:\Users\me\Documents\notes")).unwrap();
-        assert!(page.html.contains(r#"src="https://scrivi-doc.example/img/my%20cat.png""#), "{}", page.html);
+        let page = to_html(
+            "![cat](img/my%20cat.png)",
+            Path::new(r"C:\Users\me\Documents\notes"),
+        )
+        .unwrap();
+        assert!(
+            page.html
+                .contains(r#"src="https://scrivi-doc.example/img/my%20cat.png""#),
+            "{}",
+            page.html
+        );
         assert_eq!(page.root, PathBuf::from(r"C:\Users\me\Documents\notes"));
     }
 
@@ -328,16 +358,33 @@ mod tests {
         let page = within_home(md, r"C:\Users\me\Documents\work\notes");
         assert_eq!(page.root, PathBuf::from(r"C:\Users\me\Documents\work"));
         let h = &page.html;
-        assert!(h.contains(r#"src="https://scrivi-doc.example/notes/pics/a.png""#), "{h}");
-        assert!(h.contains(r#"src="https://scrivi-doc.example/shared/b.png""#), "{h}");
-        assert!(h.contains(r#"src="https://scrivi-doc.example/c.png""#), "{h}");
+        assert!(
+            h.contains(r#"src="https://scrivi-doc.example/notes/pics/a.png""#),
+            "{h}"
+        );
+        assert!(
+            h.contains(r#"src="https://scrivi-doc.example/shared/b.png""#),
+            "{h}"
+        );
+        assert!(
+            h.contains(r#"src="https://scrivi-doc.example/c.png""#),
+            "{h}"
+        );
     }
 
     #[test]
     fn the_mapping_never_climbs_to_the_user_profile_or_a_drive_root() {
-        let page = within_home("![x](../../Pictures/x.png) ![y](y.png)", r"C:\Users\me\Documents\notes");
+        let page = within_home(
+            "![x](../../Pictures/x.png) ![y](y.png)",
+            r"C:\Users\me\Documents\notes",
+        );
         assert_eq!(page.root, PathBuf::from(r"C:\Users\me\Documents\notes"));
-        assert!(page.html.contains(r#"src="https://scrivi-doc.example/y.png""#), "{}", page.html);
+        assert!(
+            page.html
+                .contains(r#"src="https://scrivi-doc.example/y.png""#),
+            "{}",
+            page.html
+        );
         // The outside image has no source rather than a wrong one.
         assert!(page.html.contains(r#"<img alt="x">"#), "{}", page.html);
 
@@ -347,7 +394,8 @@ mod tests {
 
     #[test]
     fn remote_absolute_and_file_images_never_load() {
-        let md = "![a](https://example.com/a.png) ![b](file:///C:/b.png) ![c](C:\\c.png) ![d](/d.png)";
+        let md =
+            "![a](https://example.com/a.png) ![b](file:///C:/b.png) ![c](C:\\c.png) ![d](/d.png)";
         let page = within_home(md, r"C:\Users\me\Documents");
         assert!(!page.html.contains("src="), "{}", page.html);
     }
@@ -356,20 +404,35 @@ mod tests {
     fn task_lists_tables_and_strikethrough_survive_sanitising() {
         let html = page("- [x] done\n- [ ] todo\n\n| a | b |\n|:--|:-:|\n| 1 | ~~2~~ |\n");
         // Forced attributes come out in no fixed order.
-        let boxes: Vec<&str> = html.split("<li><input ").skip(1).map(|s| &s[..s.find('>').unwrap()]).collect();
+        let boxes: Vec<&str> = html
+            .split("<li><input ")
+            .skip(1)
+            .map(|s| &s[..s.find('>').unwrap()])
+            .collect();
         assert_eq!(boxes.len(), 2, "{html}");
         for b in &boxes {
-            assert!(b.contains(r#"type="checkbox""#) && b.contains(r#"disabled="""#), "{html}");
+            assert!(
+                b.contains(r#"type="checkbox""#) && b.contains(r#"disabled="""#),
+                "{html}"
+            );
         }
-        assert!(boxes[0].contains("checked") && !boxes[1].contains("checked"), "{html}");
+        assert!(
+            boxes[0].contains("checked") && !boxes[1].contains("checked"),
+            "{html}"
+        );
         assert!(html.contains("<table>"), "{html}");
-        assert!(html.contains(r#"<th style="text-align: center">b</th>"#), "{html}");
+        assert!(
+            html.contains(r#"<th style="text-align: center">b</th>"#),
+            "{html}"
+        );
         assert!(html.contains("<del>2</del>"), "{html}");
     }
 
     #[test]
     fn raw_html_cannot_smuggle_styles_or_inputs() {
-        let html = body(&page("<td style=\"background:url(https://x)\">t</td>\n\n<input type=\"text\" value=\"v\">"));
+        let html = body(&page(
+            "<td style=\"background:url(https://x)\">t</td>\n\n<input type=\"text\" value=\"v\">",
+        ));
         assert!(!html.contains("background"), "{html}");
         assert!(!html.contains("type=\"text\""), "{html}");
     }
@@ -377,11 +440,16 @@ mod tests {
     #[test]
     fn ten_thousand_duplicate_headings_are_named_fast() {
         let md = "# a
-".repeat(10_000);
+"
+        .repeat(10_000);
         let mut events: Vec<Event> = Parser::new(&md).collect();
         let start = std::time::Instant::now();
         name_headings(&mut events);
-        assert!(start.elapsed() < std::time::Duration::from_millis(100), "{:?}", start.elapsed());
+        assert!(
+            start.elapsed() < std::time::Duration::from_millis(100),
+            "{:?}",
+            start.elapsed()
+        );
         let last = events.iter().rev().find_map(|e| match e {
             Event::Start(Tag::Heading { id, .. }) => id.clone(),
             _ => None,
@@ -399,7 +467,9 @@ mod tests {
 
     #[test]
     fn headings_get_anchor_ids_that_links_can_jump_to() {
-        let html = page("# Hello, World!\n\n## Hello, World!\n\n### `code` and *em*\n\n[jump](#hello-world-1)");
+        let html = page(
+            "# Hello, World!\n\n## Hello, World!\n\n### `code` and *em*\n\n[jump](#hello-world-1)",
+        );
         assert!(html.contains(r#"<h1 id="hello-world">"#), "{html}");
         assert!(html.contains(r#"<h2 id="hello-world-1">"#), "{html}");
         assert!(html.contains(r#"<h3 id="code-and-em">"#), "{html}");
@@ -412,7 +482,10 @@ mod tests {
         assert!(html.starts_with("<!doctype html>"), "{html}");
         assert!(html.contains("<style>") && html.contains("Sitka"), "{html}");
         assert!(html.contains("default-src 'none'"), "{html}");
-        assert!(html.contains("img-src https://scrivi-doc.example"), "{html}");
+        assert!(
+            html.contains("img-src https://scrivi-doc.example"),
+            "{html}"
+        );
         assert!(html.contains("<p>text</p>"), "{html}");
     }
 
@@ -428,7 +501,8 @@ mod tests {
     fn a_page_navigate_to_string_cannot_take_is_too_large() {
         // Each "- a" line grows to "<li>a</li>": 600 KB of text, a 1.65 MB page.
         let md = "- a
-".repeat(150_000);
+"
+        .repeat(150_000);
         assert_eq!(to_html(&md, Path::new(r"C:\n")), Err(TooLarge));
     }
 
@@ -437,7 +511,14 @@ mod tests {
         assert!(opens_outside("https://example.com/a?b#c"));
         assert!(opens_outside("HTTP://example.com"));
         assert!(opens_outside("mailto:me@example.com"));
-        for uri in ["file:///C:/x.md", "about:blank#x", "javascript:alert(1)", "other.md", "ms-settings:", "data:text/html,x"] {
+        for uri in [
+            "file:///C:/x.md",
+            "about:blank#x",
+            "javascript:alert(1)",
+            "other.md",
+            "ms-settings:",
+            "data:text/html,x",
+        ] {
             assert!(!opens_outside(uri), "{uri}");
         }
     }
@@ -449,9 +530,18 @@ mod tests {
         let page = to_html_within(&md, &dir.join("notes"), None).unwrap();
         assert_eq!(page.root, normalize(&dir));
         let h = body(&page.html);
-        assert!(h.contains(r#"src="https://scrivi-doc.example/notes/img/window.svg""#), "{h}");
-        assert!(h.contains(r#"src="https://scrivi-doc.example/shared/mark.svg""#), "{h}");
-        assert!(h.contains(r##"href="#tools""##) && h.contains(r#"<h3 id="tools">"#), "{h}");
+        assert!(
+            h.contains(r#"src="https://scrivi-doc.example/notes/img/window.svg""#),
+            "{h}"
+        );
+        assert!(
+            h.contains(r#"src="https://scrivi-doc.example/shared/mark.svg""#),
+            "{h}"
+        );
+        assert!(
+            h.contains(r##"href="#tools""##) && h.contains(r#"<h3 id="tools">"#),
+            "{h}"
+        );
         assert!(h.contains(r#"href="mailto:someone@example.com""#), "{h}");
         assert!(!h.contains("scripts ran"), "{h}");
     }
@@ -459,6 +549,11 @@ mod tests {
     #[test]
     fn a_raw_html_image_is_rewritten_too() {
         let page = within_home("<img src=\"art/b.svg\" alt=b>", r"C:\Users\me\Documents");
-        assert!(page.html.contains(r#"src="https://scrivi-doc.example/art/b.svg""#), "{}", page.html);
+        assert!(
+            page.html
+                .contains(r#"src="https://scrivi-doc.example/art/b.svg""#),
+            "{}",
+            page.html
+        );
     }
 }

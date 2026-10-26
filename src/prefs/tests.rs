@@ -8,7 +8,12 @@ fn sample() -> Prefs {
     Prefs {
         wrap: false,
         zoom: 3,
-        window: Some(Placement { x: -1200, y: 40, w: 1100, h: 760 }),
+        window: Some(Placement {
+            x: -1200,
+            y: 40,
+            w: 1100,
+            h: 760,
+        }),
         maximized: true,
         recent: vec![p(r"C:\b.md"), p(r"C:\a b\a.txt")],
     }
@@ -29,7 +34,10 @@ fn serialise_then_parse_gives_the_same_prefs() {
 #[test]
 fn an_empty_or_garbage_file_means_defaults() {
     assert_eq!(parse(""), Prefs::default());
-    assert_eq!(parse("\0\u{1}\u{2}garbage without equals\n[[[\n===\n"), Prefs::default());
+    assert_eq!(
+        parse("\0\u{1}\u{2}garbage without equals\n[[[\n===\n"),
+        Prefs::default()
+    );
     assert_eq!(parse("{\"json\": true}"), Prefs::default());
 }
 
@@ -39,7 +47,10 @@ fn a_bad_value_spoils_only_itself() {
     let got = parse(text);
     assert!(got.wrap, "an unreadable wrap keeps the default");
     assert_eq!(got.zoom, 0);
-    assert_eq!(got.window, None, "a half-readable rectangle is dropped whole");
+    assert_eq!(
+        got.window, None,
+        "a half-readable rectangle is dropped whole"
+    );
     assert!(got.maximized);
     assert_eq!(got.recent, vec![p(r"C:\a.md")]);
 }
@@ -66,12 +77,20 @@ fn recent_is_read_in_numeric_order_without_duplicates_and_capped() {
     let got = parse(&text).recent;
     assert_eq!(got.len(), MAX_RECENT);
     assert_eq!(got[..2], [p(r"C:\one.md"), p(r"C:\two.md")]);
-    assert_eq!(got.iter().filter(|x| x.to_string_lossy().eq_ignore_ascii_case(r"C:\one.md")).count(), 1);
+    assert_eq!(
+        got.iter()
+            .filter(|x| x.to_string_lossy().eq_ignore_ascii_case(r"C:\one.md"))
+            .count(),
+        1
+    );
 }
 
 #[test]
 fn a_path_with_spaces_and_equals_survives() {
-    let prefs = Prefs { recent: vec![p(r"C:\my notes\a=b & c.md")], ..Prefs::default() };
+    let prefs = Prefs {
+        recent: vec![p(r"C:\my notes\a=b & c.md")],
+        ..Prefs::default()
+    };
     assert_eq!(parse(&serialise(&prefs)).recent, prefs.recent);
 }
 
@@ -131,7 +150,10 @@ fn wa(x: i32, y: i32, w: i32, h: i32) -> Placement {
 #[test]
 fn a_visible_rectangle_is_kept() {
     let want = wa(100, 100, 800, 600);
-    assert_eq!(clamp_to_work_areas(want, &[wa(0, 0, 1920, 1040)]), Some(want));
+    assert_eq!(
+        clamp_to_work_areas(want, &[wa(0, 0, 1920, 1040)]),
+        Some(want)
+    );
 }
 
 #[test]
@@ -148,7 +170,10 @@ fn a_rectangle_bigger_than_the_work_area_is_shrunk() {
 
 #[test]
 fn a_rectangle_on_a_monitor_that_is_gone_is_placed_by_default() {
-    assert_eq!(clamp_to_work_areas(wa(2000, 0, 800, 600), &[wa(0, 0, 1920, 1040)]), None);
+    assert_eq!(
+        clamp_to_work_areas(wa(2000, 0, 800, 600), &[wa(0, 0, 1920, 1040)]),
+        None
+    );
     assert_eq!(clamp_to_work_areas(wa(0, 0, 800, 600), &[]), None);
 }
 
@@ -159,7 +184,10 @@ fn the_monitor_with_most_of_the_window_wins() {
     assert_eq!(got, Some(wa(1920, 100, 1000, 600)));
     // A monitor left of the primary has negative coordinates.
     let left = [wa(-1920, 0, 1920, 1040), wa(0, 0, 1920, 1040)];
-    assert_eq!(clamp_to_work_areas(wa(-1500, 50, 800, 600), &left), Some(wa(-1500, 50, 800, 600)));
+    assert_eq!(
+        clamp_to_work_areas(wa(-1500, 50, 800, 600), &left),
+        Some(wa(-1500, 50, 800, 600))
+    );
 }
 
 fn os(s: &str) -> Option<std::ffi::OsString> {
@@ -169,14 +197,24 @@ fn os(s: &str) -> Option<std::ffi::OsString> {
 #[test]
 fn the_prefs_folder_is_under_local_app_data_in_release() {
     let got = dir_for(false, os(r"D:\tmp"), true, os(r"C:\Users\m\AppData\Local"));
-    assert_eq!(got, Some(p(r"C:\Users\m\AppData\Local").join("scrivi")), "release ignores both test variables");
+    assert_eq!(
+        got,
+        Some(p(r"C:\Users\m\AppData\Local").join("scrivi")),
+        "release ignores both test variables"
+    );
 }
 
 #[test]
 fn a_debug_override_wins_and_a_test_instance_alone_turns_prefs_off() {
-    assert_eq!(dir_for(true, os(r"D:\tmp"), true, os(r"C:\L")), Some(p(r"D:\tmp")));
+    assert_eq!(
+        dir_for(true, os(r"D:\tmp"), true, os(r"C:\L")),
+        Some(p(r"D:\tmp"))
+    );
     assert_eq!(dir_for(true, None, true, os(r"C:\L")), None);
-    assert_eq!(dir_for(true, None, false, os(r"C:\L")), Some(p(r"C:\L").join("scrivi")));
+    assert_eq!(
+        dir_for(true, None, false, os(r"C:\L")),
+        Some(p(r"C:\L").join("scrivi"))
+    );
     assert_eq!(dir_for(true, None, false, None), None);
 }
 

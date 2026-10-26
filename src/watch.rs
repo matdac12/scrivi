@@ -55,7 +55,10 @@ impl Watcher {
             let mut sent: Vec<(PathBuf, Change)> = Vec::new();
             for event in events {
                 for (path, change) in changes(&event.event) {
-                    let known = seen.lock().map(|f| f.get(&key(&path)).map(|(p, _)| p.clone())).unwrap_or(None);
+                    let known = seen
+                        .lock()
+                        .map(|f| f.get(&key(&path)).map(|(p, _)| p.clone()))
+                        .unwrap_or(None);
                     // Report the path the Tab was opened with.
                     let Some(path) = known else { continue };
                     if !sent.iter().any(|s| *s == (path.clone(), change)) {
@@ -68,17 +71,30 @@ impl Watcher {
             }
         })
         .ok();
-        Watcher { debouncer, files, folders: HashMap::new() }
+        Watcher {
+            debouncer,
+            files,
+            folders: HashMap::new(),
+        }
     }
 
     /// A Tab shows `path`: watch its folder unless it already is.
     pub fn watch(&mut self, path: &Path) {
-        let Some(folder) = path.parent().filter(|f| !f.as_os_str().is_empty()) else { return };
+        let Some(folder) = path.parent().filter(|f| !f.as_os_str().is_empty()) else {
+            return;
+        };
         if let Ok(mut files) = self.files.lock() {
-            files.entry(key(path)).or_insert_with(|| (path.to_path_buf(), 0)).1 += 1;
+            files
+                .entry(key(path))
+                .or_insert_with(|| (path.to_path_buf(), 0))
+                .1 += 1;
         }
-        let Some(debouncer) = self.debouncer.as_mut() else { return };
-        if !self.folders.contains_key(&key(folder)) && debouncer.watch(folder, RecursiveMode::NonRecursive).is_ok() {
+        let Some(debouncer) = self.debouncer.as_mut() else {
+            return;
+        };
+        if !self.folders.contains_key(&key(folder))
+            && debouncer.watch(folder, RecursiveMode::NonRecursive).is_ok()
+        {
             self.folders.insert(key(folder), folder.to_path_buf());
         }
     }
@@ -88,7 +104,9 @@ impl Watcher {
     pub fn unwatch(&mut self, path: &Path) {
         let Some(folder) = path.parent() else { return };
         let left: Vec<PathBuf> = {
-            let Ok(mut files) = self.files.lock() else { return };
+            let Ok(mut files) = self.files.lock() else {
+                return;
+            };
             if let Some(entry) = files.get_mut(&key(path)) {
                 entry.1 -= 1;
                 if entry.1 == 0 {
@@ -97,10 +115,15 @@ impl Watcher {
             }
             files.values().map(|(p, _)| p.clone()).collect()
         };
-        if left.iter().any(|p| p.parent().is_some_and(|f| key(f) == key(folder))) {
+        if left
+            .iter()
+            .any(|p| p.parent().is_some_and(|f| key(f) == key(folder)))
+        {
             return;
         }
-        if let (Some(watched), Some(debouncer)) = (self.folders.remove(&key(folder)), self.debouncer.as_mut()) {
+        if let (Some(watched), Some(debouncer)) =
+            (self.folders.remove(&key(folder)), self.debouncer.as_mut())
+        {
             let _ = debouncer.unwatch(watched);
         }
     }
@@ -110,18 +133,33 @@ impl Watcher {
 fn changes(event: &Event) -> Vec<(PathBuf, Change)> {
     let change = |path: &PathBuf, c| (path.clone(), c);
     match event.kind {
-        EventKind::Remove(_) | EventKind::Modify(ModifyKind::Name(RenameMode::From)) => {
-            event.paths.iter().map(|p| change(p, Change::Deleted)).collect()
-        }
+        EventKind::Remove(_) | EventKind::Modify(ModifyKind::Name(RenameMode::From)) => event
+            .paths
+            .iter()
+            .map(|p| change(p, Change::Deleted))
+            .collect(),
         // From, then To: the first name is gone, the second one is new.
         EventKind::Modify(ModifyKind::Name(RenameMode::Both)) => event
             .paths
             .iter()
             .enumerate()
-            .map(|(i, p)| change(p, if i == 0 { Change::Deleted } else { Change::Changed }))
+            .map(|(i, p)| {
+                change(
+                    p,
+                    if i == 0 {
+                        Change::Deleted
+                    } else {
+                        Change::Changed
+                    },
+                )
+            })
             .collect(),
         EventKind::Access(_) | EventKind::Other => Vec::new(),
-        _ => event.paths.iter().map(|p| change(p, Change::Changed)).collect(),
+        _ => event
+            .paths
+            .iter()
+            .map(|p| change(p, Change::Changed))
+            .collect(),
     }
 }
 
@@ -142,7 +180,10 @@ mod tests {
     fn watcher() -> (Watcher, Receiver<(PathBuf, Change)>) {
         let (tx, rx) = channel();
         let tx = Mutex::new(tx);
-        (Watcher::new(move |p, c| drop(tx.lock().unwrap().send((p, c)))), rx)
+        (
+            Watcher::new(move |p, c| drop(tx.lock().unwrap().send((p, c)))),
+            rx,
+        )
     }
 
     /// Events arriving within `ms` for `path`.
@@ -168,7 +209,9 @@ mod tests {
         w.watch(&file);
         let t = Instant::now();
         std::fs::write(&file, "two, longer").unwrap();
-        let (path, change) = rx.recv_timeout(Duration::from_secs(1)).expect("an event within a second");
+        let (path, change) = rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("an event within a second");
         assert_eq!((path, change), (file.clone(), Change::Changed));
         assert!(t.elapsed() < Duration::from_secs(1));
         let _ = std::fs::remove_dir_all(&dir);
@@ -224,13 +267,17 @@ mod tests {
             .add_path(PathBuf::from(r"C:\d\new.md"));
         assert_eq!(
             changes(&event),
-            [(PathBuf::from(r"C:\d\old.md"), Change::Deleted), (PathBuf::from(r"C:\d\new.md"), Change::Changed)]
+            [
+                (PathBuf::from(r"C:\d\old.md"), Change::Deleted),
+                (PathBuf::from(r"C:\d\new.md"), Change::Changed)
+            ]
         );
     }
 
     #[test]
     fn reads_of_a_file_are_no_change() {
-        let event = Event::new(EventKind::Access(notify::event::AccessKind::Any)).add_path(PathBuf::from(r"C:\a.md"));
+        let event = Event::new(EventKind::Access(notify::event::AccessKind::Any))
+            .add_path(PathBuf::from(r"C:\a.md"));
         assert!(changes(&event).is_empty());
     }
 }

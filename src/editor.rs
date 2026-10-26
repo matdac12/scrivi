@@ -5,8 +5,8 @@ use std::ffi::c_void;
 use windows::core::{w, PCWSTR};
 use windows::Win32::Foundation::{HINSTANCE, HWND};
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, SendMessageW, SetWindowPos, SWP_NOACTIVATE, SWP_NOZORDER, WINDOW_EX_STYLE, WS_CHILD,
-    WS_CLIPCHILDREN, WS_VISIBLE,
+    CreateWindowExW, SendMessageW, SetWindowPos, SWP_NOACTIVATE, SWP_NOZORDER, WINDOW_EX_STYLE,
+    WS_CHILD, WS_CLIPCHILDREN, WS_VISIBLE,
 };
 
 use crate::chrome::Rect;
@@ -312,7 +312,11 @@ impl Editor {
         self.call(SCI_STYLECLEARALL, 0, 0);
         self.call(SCI_STYLESETFORE, STYLE_LINENUMBER, rgb(PENCIL));
         self.call(SCI_STYLESETBACK, STYLE_LINENUMBER, rgb(PAPER));
-        self.call(SCI_STYLESETSIZEFRACTIONAL, STYLE_LINENUMBER, LINE_NUMBER_SIZE);
+        self.call(
+            SCI_STYLESETSIZEFRACTIONAL,
+            STYLE_LINENUMBER,
+            LINE_NUMBER_SIZE,
+        );
 
         // Line numbers in every file; no symbol or fold margin.
         self.call(SCI_SETMARGINTYPEN, 0, SC_MARGIN_NUMBER);
@@ -321,11 +325,23 @@ impl Editor {
 
         self.call(SCI_SETCARETLINEVISIBLE, 1, 0);
         self.call(SCI_SETCARETLINELAYER, SC_LAYER_UNDER_TEXT, 0);
-        self.call(SCI_SETELEMENTCOLOUR, SC_ELEMENT_CARET_LINE_BACK, rgba(CARET_LINE, 0xFF));
+        self.call(
+            SCI_SETELEMENTCOLOUR,
+            SC_ELEMENT_CARET_LINE_BACK,
+            rgba(CARET_LINE, 0xFF),
+        );
         self.call(SCI_SETELEMENTCOLOUR, SC_ELEMENT_CARET, rgba(GRAPHITE, 0xFF));
         self.call(SCI_SETSELECTIONLAYER, SC_LAYER_UNDER_TEXT, 0);
-        self.call(SCI_SETELEMENTCOLOUR, SC_ELEMENT_SELECTION_BACK, rgba(SELECTION, 0xFF));
-        self.call(SCI_SETELEMENTCOLOUR, SC_ELEMENT_SELECTION_INACTIVE_BACK, rgba(0x000000, 0x16));
+        self.call(
+            SCI_SETELEMENTCOLOUR,
+            SC_ELEMENT_SELECTION_BACK,
+            rgba(SELECTION, 0xFF),
+        );
+        self.call(
+            SCI_SETELEMENTCOLOUR,
+            SC_ELEMENT_SELECTION_INACTIVE_BACK,
+            rgba(0x000000, 0x16),
+        );
         self.call(SCI_SETMULTIPLESELECTION, 1, 0);
         self.call(SCI_SETADDITIONALSELECTIONTYPING, 1, 0);
 
@@ -366,7 +382,11 @@ impl Editor {
     /// A new empty document, owned by the caller until `release_document`.
     /// A Large file's has no styles and allows over 2 GB (spec §7).
     pub fn create_document(&self, large: bool) -> isize {
-        let options = if large { SC_DOCUMENTOPTION_STYLES_NONE | SC_DOCUMENTOPTION_TEXT_LARGE } else { 0 };
+        let options = if large {
+            SC_DOCUMENTOPTION_STYLES_NONE | SC_DOCUMENTOPTION_TEXT_LARGE
+        } else {
+            0
+        };
         self.call(SCI_CREATEDOCUMENT, 0, options)
     }
 
@@ -409,7 +429,11 @@ impl Editor {
     }
 
     pub fn set_wrap(&self, wrap: bool) {
-        self.call(SCI_SETWRAPMODE, if wrap { SC_WRAP_WORD } else { SC_WRAP_NONE }, 0);
+        self.call(
+            SCI_SETWRAPMODE,
+            if wrap { SC_WRAP_WORD } else { SC_WRAP_NONE },
+            0,
+        );
     }
 
     /// Length of the shown document's text in bytes.
@@ -457,7 +481,10 @@ impl Editor {
         let line = self.call(SCI_LINEFROMPOSITION, pos as usize, 0);
         let start = self.call(SCI_POSITIONFROMLINE, line as usize, 0);
         let col = self.call(SCI_COUNTCHARACTERS, start as usize, pos);
-        Caret { line: line as usize + 1, col: col as usize + 1 }
+        Caret {
+            line: line as usize + 1,
+            col: col as usize + 1,
+        }
     }
 
     /// Zoom as a percentage of the base font size: 100 when not zoomed.
@@ -494,7 +521,10 @@ const CURRENT_INK: u32 = 0xF5B83D;
 impl Editor {
     /// Look of the match indicators: boxes under the text.
     pub fn define_find_indicators(&self) {
-        for (id, ink) in [(MATCH_INDICATOR, MATCH_INK), (CURRENT_INDICATOR, CURRENT_INK)] {
+        for (id, ink) in [
+            (MATCH_INDICATOR, MATCH_INK),
+            (CURRENT_INDICATOR, CURRENT_INK),
+        ] {
             self.call(SCI_INDICSETSTYLE, id, INDIC_ROUNDBOX);
             self.call(SCI_INDICSETFORE, id, rgb(ink));
             self.call(SCI_INDICSETUNDER, id, 1);
@@ -504,7 +534,11 @@ impl Editor {
     }
 
     /// Mark `ranges` with `indicator`.
-    pub fn mark_ranges<'a>(&self, indicator: usize, ranges: impl IntoIterator<Item = &'a std::ops::Range<usize>>) {
+    pub fn mark_ranges<'a>(
+        &self,
+        indicator: usize,
+        ranges: impl IntoIterator<Item = &'a std::ops::Range<usize>>,
+    ) {
         self.call(SCI_SETINDICATORCURRENT, indicator, 0);
         for r in ranges {
             self.call(SCI_INDICATORFILLRANGE, r.start, (r.end - r.start) as isize);
@@ -531,7 +565,8 @@ impl Editor {
 
     /// The selection, low to high (empty at the caret).
     pub fn selection(&self) -> std::ops::Range<usize> {
-        self.call(SCI_GETSELECTIONSTART, 0, 0) as usize..self.call(SCI_GETSELECTIONEND, 0, 0) as usize
+        self.call(SCI_GETSELECTIONSTART, 0, 0) as usize
+            ..self.call(SCI_GETSELECTIONEND, 0, 0) as usize
     }
 
     /// Select `r` and scroll it into view; the focus stays where it is.
@@ -549,7 +584,9 @@ impl Editor {
         let mut buf = vec![0u8; sel.len() + 1];
         self.call(SCI_GETSELTEXT, 0, buf.as_mut_ptr() as isize);
         buf.truncate(sel.len());
-        String::from_utf8(buf).ok().filter(|s| !s.contains(['\r', '\n']))
+        String::from_utf8(buf)
+            .ok()
+            .filter(|s| !s.contains(['\r', '\n']))
     }
 
     /// Put the caret at the start of `line` (0-based) and the line in the
@@ -559,7 +596,11 @@ impl Editor {
         self.call(SCI_GOTOLINE, line, 0);
         let shown = self.call(SCI_VISIBLEFROMDOCLINE, line, 0);
         let rows = self.call(SCI_LINESONSCREEN, 0, 0);
-        self.call(SCI_SETFIRSTVISIBLELINE, (shown - rows / 2).max(0) as usize, 0);
+        self.call(
+            SCI_SETFIRSTVISIBLELINE,
+            (shown - rows / 2).max(0) as usize,
+            0,
+        );
     }
 
     /// One zoom step; Scintilla keeps it between its own limits.

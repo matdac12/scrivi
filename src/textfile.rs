@@ -185,7 +185,12 @@ pub fn decode_owned(bytes: Vec<u8>, ansi_code_page: u16) -> Decoded {
         match String::from_utf8(bytes) {
             Ok(text) => {
                 let eol = detect_eol(&text);
-                return Decoded { text, encoding: Encoding::Utf8, eol, lossy: false };
+                return Decoded {
+                    text,
+                    encoding: Encoding::Utf8,
+                    eol,
+                    lossy: false,
+                };
             }
             Err(e) => return decode(e.as_bytes(), ansi_code_page),
         }
@@ -668,7 +673,11 @@ mod tests {
             b"a\0b\0c\0".to_vec(),
         ];
         for bytes in samples {
-            assert_eq!(decode_owned(bytes.clone(), 1252), decode(&bytes, 1252), "{bytes:?}");
+            assert_eq!(
+                decode_owned(bytes.clone(), 1252),
+                decode(&bytes, 1252),
+                "{bytes:?}"
+            );
         }
     }
 

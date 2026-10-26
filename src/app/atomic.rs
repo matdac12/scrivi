@@ -28,8 +28,9 @@ use windows::core::{HSTRING, PCWSTR};
 use windows::Win32::Foundation::CloseHandle;
 use windows::Win32::Storage::FileSystem::{
     CreateFileW, GetFileInformationByHandle, MoveFileExW, ReplaceFileW, BY_HANDLE_FILE_INFORMATION,
-    FILE_FLAG_BACKUP_SEMANTICS, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, MOVEFILE_REPLACE_EXISTING,
-    MOVEFILE_WRITE_THROUGH, OPEN_EXISTING, REPLACEFILE_IGNORE_MERGE_ERRORS,
+    FILE_FLAG_BACKUP_SEMANTICS, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
+    MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH, OPEN_EXISTING,
+    REPLACEFILE_IGNORE_MERGE_ERRORS,
 };
 
 use crate::tabs::FileId;
@@ -86,7 +87,12 @@ struct Steps {
     in_place: fn(&Path, &[u8]) -> Result<(), InPlaceError>,
 }
 
-const STEPS: Steps = Steps { temp: write_temp, replace, place: move_into, in_place: write_in_place };
+const STEPS: Steps = Steps {
+    temp: write_temp,
+    replace,
+    place: move_into,
+    in_place: write_in_place,
+};
 
 /// Write `bytes` to `path` (spec §7 and the SCRIVI-16 notes).
 pub fn write(path: &Path, bytes: &[u8]) -> Result<Written, WriteError> {
@@ -96,14 +102,22 @@ pub fn write(path: &Path, bytes: &[u8]) -> Result<Written, WriteError> {
 fn write_with(path: &Path, bytes: &[u8], steps: &Steps) -> Result<Written, WriteError> {
     // No temp file (a full disk): writing over the file could only leave it
     // half written, so stop with it untouched.
-    let temp = (steps.temp)(path, bytes).map_err(|write| WriteError { replace: None, write, kept: None })?;
+    let temp = (steps.temp)(path, bytes).map_err(|write| WriteError {
+        replace: None,
+        write,
+        kept: None,
+    })?;
     let info = file_info(path);
     if info.is_none() && std::fs::metadata(path).is_err() {
         // A new file has nothing to write over.
         return match (steps.place)(path, &temp) {
             Ok(written) => Ok(written),
             // The temp file is the only copy of the text.
-            Err(write) => Err(WriteError { replace: None, write, kept: Some(temp) }),
+            Err(write) => Err(WriteError {
+                replace: None,
+                write,
+                kept: Some(temp),
+            }),
         };
     }
     // Other hard links would be left on the old bytes by a swap.
@@ -117,7 +131,11 @@ fn write_with(path: &Path, bytes: &[u8], steps: &Steps) -> Result<Written, Write
                 // The original is gone and the move failed too: the temp
                 // file holds the text.
                 if std::fs::metadata(path).is_err() {
-                    return Err(WriteError { replace: None, write: e, kept: Some(temp) });
+                    return Err(WriteError {
+                        replace: None,
+                        write: e,
+                        kept: Some(temp),
+                    });
                 }
                 Some(e)
             }
@@ -137,7 +155,11 @@ fn write_with(path: &Path, bytes: &[u8], steps: &Steps) -> Result<Written, Write
                 let _ = std::fs::remove_file(&temp);
                 None
             };
-            Err(WriteError { replace: replace_error, write: e.error, kept })
+            Err(WriteError {
+                replace: replace_error,
+                write: e.error,
+                kept,
+            })
         }
     }
 }
@@ -151,7 +173,11 @@ fn write_temp(path: &Path, bytes: &[u8]) -> io::Result<PathBuf> {
     for _ in 0..16 {
         let n = COUNTER.fetch_add(1, Ordering::Relaxed);
         let temp = folder.join(format!(".scrivi-{}-{n}.tmp", std::process::id()));
-        match std::fs::OpenOptions::new().write(true).create_new(true).open(&temp) {
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp)
+        {
             Ok(mut file) => {
                 let done = file.write_all(bytes).and_then(|()| file.sync_all());
                 drop(file);
@@ -201,10 +227,19 @@ struct InPlaceError {
 
 /// Truncate the existing file and write the bytes into it.
 fn write_in_place(path: &Path, bytes: &[u8]) -> Result<(), InPlaceError> {
-    let untouched = |error| InPlaceError { error, truncated: false };
+    let untouched = |error| InPlaceError {
+        error,
+        truncated: false,
+    };
     // Opening without truncating first: a refusal leaves the file as it was.
-    let mut file = std::fs::OpenOptions::new().write(true).open(path).map_err(untouched)?;
-    let cut = |error| InPlaceError { error, truncated: true };
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .open(path)
+        .map_err(untouched)?;
+    let cut = |error| InPlaceError {
+        error,
+        truncated: true,
+    };
     file.set_len(0).map_err(cut)?;
     file.write_all(bytes).map_err(cut)?;
     file.sync_all().map_err(cut)
@@ -237,7 +272,10 @@ pub fn file_info(path: &Path) -> Option<FileInfo> {
         let index = (u64::from(info.nFileIndexHigh) << 32) | u64::from(info.nFileIndexLow);
         Some(FileInfo {
             // Index 0: the file system has no file index to tell files by.
-            id: (index != 0).then_some(FileId { volume: info.dwVolumeSerialNumber, index }),
+            id: (index != 0).then_some(FileId {
+                volume: info.dwVolumeSerialNumber,
+                index,
+            }),
             links: info.nNumberOfLinks,
         })
     }
@@ -254,7 +292,8 @@ fn extended(path: &Path) -> HSTRING {
 }
 
 fn extended_str(path: &str) -> String {
-    let drive_absolute = path.as_bytes().get(1) == Some(&b':') && matches!(path.as_bytes().get(2), Some(b'\\' | b'/'));
+    let drive_absolute = path.as_bytes().get(1) == Some(&b':')
+        && matches!(path.as_bytes().get(2), Some(b'\\' | b'/'));
     let unc = path.starts_with(r"\\") && !path.starts_with(r"\\?\") && !path.starts_with(r"\\.\");
     if path.len() < LONG_PATH {
         return path.to_string();
@@ -293,8 +332,10 @@ mod tests {
     }
 
     fn entries(dir: &Path) -> Vec<String> {
-        let mut names: Vec<String> =
-            std::fs::read_dir(dir).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+        let mut names: Vec<String> = std::fs::read_dir(dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
         names.sort();
         names
     }
@@ -316,7 +357,11 @@ mod tests {
     #[test]
     fn an_unedited_utf16_le_file_round_trips_byte_for_byte() {
         let mut bytes = vec![0xFF, 0xFE];
-        bytes.extend("Perché è già così\r\n😀 fine\r\n".encode_utf16().flat_map(u16::to_le_bytes));
+        bytes.extend(
+            "Perché è già così\r\n😀 fine\r\n"
+                .encode_utf16()
+                .flat_map(u16::to_le_bytes),
+        );
         round_trip("utf16le.txt", &bytes);
     }
 
@@ -329,7 +374,10 @@ mod tests {
 
     #[test]
     fn an_unedited_crlf_file_round_trips_byte_for_byte() {
-        round_trip("crlf.md", b"# Title\r\n\r\n- one\r\n- two\r\nno final break");
+        round_trip(
+            "crlf.md",
+            b"# Title\r\n\r\n- one\r\n- two\r\nno final break",
+        );
     }
 
     #[test]
@@ -372,7 +420,10 @@ mod tests {
         let dir = folder("notemp");
         let path = dir.join("keep.txt");
         std::fs::write(&path, b"precious").unwrap();
-        let steps = Steps { temp: |_, _| Err(io::Error::other("disk full")), ..STEPS };
+        let steps = Steps {
+            temp: |_, _| Err(io::Error::other("disk full")),
+            ..STEPS
+        };
         let err = write_with(&path, b"new", &steps).unwrap_err();
         assert!(err.replace.is_none());
         assert_eq!(err.to_string(), "disk full");
@@ -398,7 +449,10 @@ mod tests {
         let kept = err.kept.clone().expect("the temp path is reported");
         assert_eq!(std::fs::read(&kept).unwrap(), b"new text");
         assert!(err.to_string().contains("Your text was saved to"), "{err}");
-        assert!(err.to_string().contains(&kept.display().to_string()), "{err}");
+        assert!(
+            err.to_string().contains(&kept.display().to_string()),
+            "{err}"
+        );
         assert!(!path.exists());
         std::fs::remove_dir_all(&dir).unwrap();
     }
@@ -407,7 +461,10 @@ mod tests {
     fn a_new_file_that_cannot_be_moved_into_place_keeps_the_temp_copy() {
         let dir = folder("noplace");
         let path = dir.join("new.txt");
-        let steps = Steps { place: |_, _| Err(io::Error::other("denied")), ..STEPS };
+        let steps = Steps {
+            place: |_, _| Err(io::Error::other("denied")),
+            ..STEPS
+        };
         let err = write_with(&path, b"text", &steps).unwrap_err();
         assert_eq!(std::fs::read(err.kept.as_ref().unwrap()).unwrap(), b"text");
         std::fs::remove_dir_all(&dir).unwrap();
@@ -422,7 +479,10 @@ mod tests {
             replace: |_, _| Err(io::Error::other("swap refused")),
             in_place: |path, _| {
                 std::fs::write(path, b"").unwrap();
-                Err(InPlaceError { error: io::Error::other("disk full"), truncated: true })
+                Err(InPlaceError {
+                    error: io::Error::other("disk full"),
+                    truncated: true,
+                })
             },
             ..STEPS
         };
@@ -467,7 +527,11 @@ mod tests {
         std::fs::write(&path, b"old").unwrap();
         std::fs::hard_link(&path, &other).unwrap();
         assert_eq!(write(&path, b"new").unwrap(), Written::InPlace);
-        assert_eq!(std::fs::read(&other).unwrap(), b"new", "the other link sees the new text");
+        assert_eq!(
+            std::fs::read(&other).unwrap(),
+            b"new",
+            "the other link sees the new text"
+        );
         assert_eq!(file_info(&path).unwrap().links, 2);
         assert_eq!(entries(&dir), ["a.txt", "b.txt"]);
         std::fs::remove_dir_all(&dir).unwrap();
@@ -492,7 +556,10 @@ mod tests {
         let path = dir.join(format!("{}.txt", "n".repeat(200)));
         let temp = write_temp(&path, b"x").unwrap();
         let name = temp.file_name().unwrap().to_string_lossy().into_owned();
-        assert!(name.len() < 30 && name.starts_with(".scrivi-") && name.ends_with(".tmp"), "{name}");
+        assert!(
+            name.len() < 30 && name.starts_with(".scrivi-") && name.ends_with(".tmp"),
+            "{name}"
+        );
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -523,7 +590,9 @@ mod tests {
 
     #[test]
     fn a_missing_folder_fails_without_a_replace_error() {
-        let path = std::env::temp_dir().join("scrivi-no-such-folder-0b1f").join("x.txt");
+        let path = std::env::temp_dir()
+            .join("scrivi-no-such-folder-0b1f")
+            .join("x.txt");
         let err = write(&path, b"x").unwrap_err();
         assert!(err.replace.is_none());
     }

@@ -24,7 +24,13 @@ fn instance() -> String {
 }
 
 fn resident_running() -> bool {
-    unsafe { FindWindowW(&HSTRING::from(format!("Scrivi.Window.{}", instance())), PCWSTR::null()) }.is_ok()
+    unsafe {
+        FindWindowW(
+            &HSTRING::from(format!("Scrivi.Window.{}", instance())),
+            PCWSTR::null(),
+        )
+    }
+    .is_ok()
 }
 
 fn wait_until(what: &str, mut f: impl FnMut() -> bool) {
@@ -69,9 +75,13 @@ impl Run {
         let mut found = HashMap::new();
         wait_until(&format!("{name} shown"), || {
             let text = std::fs::read_to_string(self.dir.join("editor.txt")).unwrap_or_default();
-            let map: HashMap<String, String> =
-                text.lines().filter_map(|l| l.split_once('=')).map(|(k, v)| (k.into(), v.into())).collect();
-            let shown = map.get("name") == Some(&name) && map.get("length").is_some_and(|l| l != "0");
+            let map: HashMap<String, String> = text
+                .lines()
+                .filter_map(|l| l.split_once('='))
+                .map(|(k, v)| (k.into(), v.into()))
+                .collect();
+            let shown =
+                map.get("name") == Some(&name) && map.get("length").is_some_and(|l| l != "0");
             if shown {
                 found = map;
             }
@@ -111,7 +121,10 @@ fn a_file_over_50_mb_opens_read_only_without_undo_or_wrap_and_one_at_50_mb_does_
     let resident = Resident(run.scrivi(&small).spawn().unwrap());
     wait_until("the resident", resident_running);
     let editor = run.editor_of(&small);
-    assert_eq!((editor["read_only"].as_str(), editor["undo"].as_str()), ("0", "1"));
+    assert_eq!(
+        (editor["read_only"].as_str(), editor["undo"].as_str()),
+        ("0", "1")
+    );
 
     assert!(run.scrivi(&exact).status().unwrap().success());
     let editor = run.editor_of(&exact);

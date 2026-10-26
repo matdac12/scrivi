@@ -23,7 +23,13 @@ fn instance() -> String {
 }
 
 fn resident_up() -> bool {
-    unsafe { FindWindowW(&HSTRING::from(format!("Scrivi.Window.{}", instance())), PCWSTR::null()) }.is_ok()
+    unsafe {
+        FindWindowW(
+            &HSTRING::from(format!("Scrivi.Window.{}", instance())),
+            PCWSTR::null(),
+        )
+    }
+    .is_ok()
 }
 
 fn wait_until(what: &str, mut f: impl FnMut() -> bool) {
@@ -55,12 +61,19 @@ impl Run {
 
     /// The `[recent]` file names in scrivi.ini, newest first.
     fn recent(&self) -> Vec<String> {
-        let text = std::fs::read_to_string(self.dir.join("prefs").join("scrivi.ini")).unwrap_or_default();
+        let text =
+            std::fs::read_to_string(self.dir.join("prefs").join("scrivi.ini")).unwrap_or_default();
         let after = text.split("[recent]").nth(1).unwrap_or("");
         after
             .lines()
             .filter_map(|l| l.split_once('='))
-            .map(|(_, p)| Path::new(p).file_name().unwrap().to_string_lossy().into_owned())
+            .map(|(_, p)| {
+                Path::new(p)
+                    .file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned()
+            })
             .collect()
     }
 }
@@ -101,7 +114,9 @@ fn recent_files_are_written_newest_first_and_survive_a_restart() {
     drop(first);
     wait_until("the window to go away", || !resident_up());
     let second = Resident(run.scrivi(&[&files[2]]).spawn().unwrap());
-    wait_until("c.md on top of the old list", || run.recent() == ["c.md", "a.md", "b.txt"]);
+    wait_until("c.md on top of the old list", || {
+        run.recent() == ["c.md", "a.md", "b.txt"]
+    });
 
     drop(second);
     wait_until("the window to go away", || !resident_up());

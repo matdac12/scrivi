@@ -6,7 +6,9 @@ use std::collections::{HashMap, HashSet};
 
 use windows::core::{HSTRING, PCWSTR, PWSTR};
 use windows::Win32::Globalization::{ISpellChecker, ISpellCheckerFactory, SpellCheckerFactory};
-use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CoTaskMemFree, CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED};
+use windows::Win32::System::Com::{
+    CoCreateInstance, CoInitializeEx, CoTaskMemFree, CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED,
+};
 
 /// The languages scrivi checks, in the order suggestions are listed.
 pub const LANGUAGES: [&str; 2] = ["it-IT", "en-US"];
@@ -33,7 +35,11 @@ impl Checkers {
         unsafe {
             // Already initialised (S_FALSE) or by another model: both are fine.
             let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
-            if let Ok(factory) = CoCreateInstance::<_, ISpellCheckerFactory>(&SpellCheckerFactory, None, CLSCTX_INPROC_SERVER) {
+            if let Ok(factory) = CoCreateInstance::<_, ISpellCheckerFactory>(
+                &SpellCheckerFactory,
+                None,
+                CLSCTX_INPROC_SERVER,
+            ) {
                 for tag in tags {
                     let wide = HSTRING::from(*tag);
                     if factory.IsSupported(&wide).is_ok_and(|b| b.as_bool()) {
@@ -45,7 +51,11 @@ impl Checkers {
             }
         }
         let cache = RefCell::new(vec![HashMap::new(); list.len()]);
-        Checkers { list, cache, added: RefCell::default() }
+        Checkers {
+            list,
+            cache,
+            added: RefCell::default(),
+        }
     }
 
     pub fn is_empty(&self) -> bool {
@@ -69,7 +79,9 @@ impl Checkers {
             return *known;
         }
         // A failed check says nothing: don't remember it.
-        let Some(rejected) = Self::reject_uncached(&self.list[index].1, word) else { return false };
+        let Some(rejected) = Self::reject_uncached(&self.list[index].1, word) else {
+            return false;
+        };
         self.cache.borrow_mut()[index].insert(word.to_string(), rejected);
         rejected
     }
@@ -87,7 +99,11 @@ impl Checkers {
     /// Up to `max` suggestions from either language, alternating, no repeats.
     pub fn suggest(&self, word: &str, max: usize) -> Vec<String> {
         let normal = word.replace('\u{2019}', "'");
-        let lists: Vec<Vec<String>> = self.list.iter().map(|(_, c)| suggestions_of(c, &normal)).collect();
+        let lists: Vec<Vec<String>> = self
+            .list
+            .iter()
+            .map(|(_, c)| suggestions_of(c, &normal))
+            .collect();
         let mut out: Vec<String> = Vec::new();
         for round in 0..lists.iter().map(Vec::len).max().unwrap_or(0) {
             for list in &lists {
@@ -109,7 +125,9 @@ impl Checkers {
                 let _ = checker.Add(PCWSTR(wide.as_ptr()));
             }
         }
-        self.added.borrow_mut().insert(word.replace('\u{2019}', "'").to_lowercase());
+        self.added
+            .borrow_mut()
+            .insert(word.replace('\u{2019}', "'").to_lowercase());
         for cache in self.cache.borrow_mut().iter_mut() {
             cache.clear();
         }
@@ -120,7 +138,9 @@ fn suggestions_of(checker: &ISpellChecker, word: &str) -> Vec<String> {
     let wide = to_wide(word);
     let mut out = Vec::new();
     unsafe {
-        let Ok(list) = checker.Suggest(PCWSTR(wide.as_ptr())) else { return out };
+        let Ok(list) = checker.Suggest(PCWSTR(wide.as_ptr())) else {
+            return out;
+        };
         loop {
             let mut item = [PWSTR::null()];
             if list.Next(&mut item, None).0 != 0 || item[0].is_null() {
@@ -147,7 +167,11 @@ mod tests {
         if c.list.len() == LANGUAGES.len() {
             Some(c)
         } else {
-            eprintln!("skipped: only {} of {} languages installed", c.list.len(), LANGUAGES.len());
+            eprintln!(
+                "skipped: only {} of {} languages installed",
+                c.list.len(),
+                LANGUAGES.len()
+            );
             None
         }
     }

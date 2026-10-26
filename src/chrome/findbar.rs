@@ -92,14 +92,31 @@ pub struct FindLayout {
 impl FindLayout {
     pub fn new(band: Rect, scale: f32, mode: Mode) -> FindLayout {
         let px = |dip: f32| (dip * scale).round() as i32;
-        let none = Rect { left: band.left, top: band.top, right: band.left, bottom: band.top };
+        let none = Rect {
+            left: band.left,
+            top: band.top,
+            right: band.left,
+            bottom: band.top,
+        };
         let (pad_x, gap, row_h) = (px(PAD_X), px(GAP), px(ROW_H));
         let row1_t = band.top + px(PAD_Y);
         let row2_t = row1_t + row_h + px(ROW_GAP);
-        let rect = |left: i32, top: i32, w: i32, h: i32| Rect { left, top, right: left + w.max(0), bottom: top + h };
-        let centred = |left: i32, row_t: i32, w: f32, h: f32| rect(left, row_t + (row_h - px(h)) / 2, px(w), px(h));
+        let rect = |left: i32, top: i32, w: i32, h: i32| Rect {
+            left,
+            top,
+            right: left + w.max(0),
+            bottom: top + h,
+        };
+        let centred = |left: i32, row_t: i32, w: f32, h: f32| {
+            rect(left, row_t + (row_h - px(h)) / 2, px(w), px(h))
+        };
 
-        let close = rect(band.right - pad_x - px(ICON_BUTTON), row1_t, px(ICON_BUTTON), row_h);
+        let close = rect(
+            band.right - pad_x - px(ICON_BUTTON),
+            row1_t,
+            px(ICON_BUTTON),
+            row_h,
+        );
         let mut l = FindLayout {
             mode,
             band,
@@ -123,12 +140,27 @@ impl FindLayout {
             }
             Mode::Find | Mode::Replace => {
                 // Right to left from ×; the field takes what is left, up to its width.
-                let next = rect(close.left - gap - px(ICON_BUTTON), row1_t, px(ICON_BUTTON), row_h);
-                let prev = rect(next.left - gap - px(ICON_BUTTON), row1_t, px(ICON_BUTTON), row_h);
+                let next = rect(
+                    close.left - gap - px(ICON_BUTTON),
+                    row1_t,
+                    px(ICON_BUTTON),
+                    row_h,
+                );
+                let prev = rect(
+                    next.left - gap - px(ICON_BUTTON),
+                    row1_t,
+                    px(ICON_BUTTON),
+                    row_h,
+                );
                 let count = rect(prev.left - gap - px(COUNT_W), row1_t, px(COUNT_W), row_h);
                 let toggle = centred(count.left - gap - px(TOGGLE_W), row1_t, TOGGLE_W, TOGGLE_H);
                 let room = toggle.left - gap - pad_x;
-                l.field = rect(pad_x, row1_t, room.clamp(px(FIELD_MIN_W), px(FIELD_W)), row_h);
+                l.field = rect(
+                    pad_x,
+                    row1_t,
+                    room.clamp(px(FIELD_MIN_W), px(FIELD_W)),
+                    row_h,
+                );
                 (l.next, l.prev, l.count, l.match_case) = (next, prev, count, toggle);
                 if mode == Mode::Replace {
                     l.replace_field = rect(pad_x, row2_t, l.field.right - pad_x, row_h);
@@ -146,15 +178,26 @@ impl FindLayout {
             Field::Find | Field::Goto => self.field,
             Field::Replace => self.replace_field,
         };
-        let (x, y) = ((EDIT_INSET_X * self.scale).round() as i32, (EDIT_INSET_Y * self.scale).round() as i32);
-        Rect { left: frame.left + x, top: frame.top + y, right: (frame.right - x).max(frame.left + x), bottom: frame.bottom - y }
+        let (x, y) = (
+            (EDIT_INSET_X * self.scale).round() as i32,
+            (EDIT_INSET_Y * self.scale).round() as i32,
+        );
+        Rect {
+            left: frame.left + x,
+            top: frame.top + y,
+            right: (frame.right - x).max(frame.left + x),
+            bottom: frame.bottom - y,
+        }
     }
 
     pub fn hit_test(&self, x: i32, y: i32) -> FindHit {
         let at = |r: &Rect| x >= r.left && x < r.right && y >= r.top && y < r.bottom;
         let pieces = match self.mode {
             Mode::Hidden => return FindHit::None,
-            Mode::Goto => vec![(self.close, FindHit::Close), (self.field, FindHit::Field(Field::Goto))],
+            Mode::Goto => vec![
+                (self.close, FindHit::Close),
+                (self.field, FindHit::Field(Field::Goto)),
+            ],
             Mode::Find | Mode::Replace => vec![
                 (self.close, FindHit::Close),
                 (self.next, FindHit::Next),
@@ -166,7 +209,10 @@ impl FindLayout {
                 (self.replace_all, FindHit::ReplaceAll),
             ],
         };
-        pieces.into_iter().find(|(r, _)| at(r)).map_or(FindHit::None, |(_, hit)| hit)
+        pieces
+            .into_iter()
+            .find(|(r, _)| at(r))
+            .map_or(FindHit::None, |(_, hit)| hit)
     }
 }
 
@@ -175,7 +221,12 @@ mod tests {
     use super::*;
 
     fn band(width: i32, mode: Mode, scale: f32) -> Rect {
-        Rect { left: 0, top: 42, right: width, bottom: 42 + (height(mode) * scale).round() as i32 }
+        Rect {
+            left: 0,
+            top: 42,
+            right: width,
+            bottom: 42 + (height(mode) * scale).round() as i32,
+        }
     }
 
     fn layout(width: i32, mode: Mode) -> FindLayout {
@@ -183,7 +234,12 @@ mod tests {
     }
 
     fn r(left: i32, top: i32, right: i32, bottom: i32) -> Rect {
-        Rect { left, top, right, bottom }
+        Rect {
+            left,
+            top,
+            right,
+            bottom,
+        }
     }
 
     #[test]
@@ -263,7 +319,10 @@ mod tests {
     fn hit_test_follows_the_mode() {
         // The replace row is not there in Find.
         assert_eq!(layout(1000, Mode::Find).hit_test(350, 90), FindHit::None);
-        assert_eq!(layout(1000, Mode::Goto).hit_test(100, 60), FindHit::Field(Field::Goto));
+        assert_eq!(
+            layout(1000, Mode::Goto).hit_test(100, 60),
+            FindHit::Field(Field::Goto)
+        );
         assert_eq!(layout(1000, Mode::Goto).hit_test(900, 60), FindHit::None);
         assert_eq!(layout(1000, Mode::Hidden).hit_test(100, 60), FindHit::None);
     }

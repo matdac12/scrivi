@@ -49,15 +49,33 @@ pub struct State {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Item {
     /// `label` holds the `&` access key and, after a tab, the shortcut.
-    Command { label: String, id: u16, enabled: bool, checked: bool },
-    Sub { label: String, enabled: bool, items: Vec<Item> },
+    Command {
+        label: String,
+        id: u16,
+        enabled: bool,
+        checked: bool,
+    },
+    Sub {
+        label: String,
+        enabled: bool,
+        items: Vec<Item>,
+    },
     Separator,
 }
 
 /// One line of a popup's definition.
 pub enum Entry {
-    Command { label: &'static str, keys: &'static str, id: u16, enabled: fn(&State) -> bool },
-    Sub { label: &'static str, enabled: fn(&State) -> bool, items: fn(&State) -> Vec<Item> },
+    Command {
+        label: &'static str,
+        keys: &'static str,
+        id: u16,
+        enabled: fn(&State) -> bool,
+    },
+    Sub {
+        label: &'static str,
+        enabled: fn(&State) -> bool,
+        items: fn(&State) -> Vec<Item>,
+    },
     Separator,
 }
 
@@ -75,48 +93,166 @@ fn writable(s: &State) -> bool {
 }
 
 pub const FILE: &[Entry] = &[
-    Entry::Command { label: "&New tab", keys: "Ctrl+T", id: cmd::NEW_TAB, enabled: always },
-    Entry::Command { label: "&Open\u{2026}", keys: "Ctrl+O", id: cmd::OPEN, enabled: always },
-    Entry::Sub { label: "Recent &files", enabled: |_| recent::any(), items: |_| recent::menu_items() },
+    Entry::Command {
+        label: "&New tab",
+        keys: "Ctrl+T",
+        id: cmd::NEW_TAB,
+        enabled: always,
+    },
+    Entry::Command {
+        label: "&Open\u{2026}",
+        keys: "Ctrl+O",
+        id: cmd::OPEN,
+        enabled: always,
+    },
+    Entry::Sub {
+        label: "Recent &files",
+        enabled: |_| recent::any(),
+        items: |_| recent::menu_items(),
+    },
     Entry::Separator,
-    Entry::Command { label: "&Save", keys: "Ctrl+S", id: cmd::SAVE, enabled: always },
-    Entry::Command { label: "Save &as\u{2026}", keys: "Ctrl+Shift+S", id: cmd::SAVE_AS, enabled: always },
+    Entry::Command {
+        label: "&Save",
+        keys: "Ctrl+S",
+        id: cmd::SAVE,
+        enabled: always,
+    },
+    Entry::Command {
+        label: "Save &as\u{2026}",
+        keys: "Ctrl+Shift+S",
+        id: cmd::SAVE_AS,
+        enabled: always,
+    },
     Entry::Separator,
-    Entry::Sub { label: "&Encoding", enabled: always, items: encodings },
-    Entry::Sub { label: "&Line endings", enabled: always, items: line_endings },
+    Entry::Sub {
+        label: "&Encoding",
+        enabled: always,
+        items: encodings,
+    },
+    Entry::Sub {
+        label: "&Line endings",
+        enabled: always,
+        items: line_endings,
+    },
     Entry::Separator,
-    Entry::Command { label: "&Close tab", keys: "Ctrl+W", id: cmd::CLOSE_TAB, enabled: always },
-    Entry::Command { label: "E&xit", keys: "", id: cmd::EXIT, enabled: always },
+    Entry::Command {
+        label: "&Close tab",
+        keys: "Ctrl+W",
+        id: cmd::CLOSE_TAB,
+        enabled: always,
+    },
+    Entry::Command {
+        label: "E&xit",
+        keys: "",
+        id: cmd::EXIT,
+        enabled: always,
+    },
 ];
 
 pub const EDIT: &[Entry] = &[
-    Entry::Command { label: "&Undo", keys: "Ctrl+Z", id: cmd::UNDO, enabled: |s| s.can_undo },
-    Entry::Command { label: "&Redo", keys: "Ctrl+Y", id: cmd::REDO, enabled: |s| s.can_redo },
+    Entry::Command {
+        label: "&Undo",
+        keys: "Ctrl+Z",
+        id: cmd::UNDO,
+        enabled: |s| s.can_undo,
+    },
+    Entry::Command {
+        label: "&Redo",
+        keys: "Ctrl+Y",
+        id: cmd::REDO,
+        enabled: |s| s.can_redo,
+    },
     Entry::Separator,
-    Entry::Command { label: "Cu&t", keys: "Ctrl+X", id: cmd::CUT, enabled: |s| s.selection && !s.read_only && !s.rendered },
-    Entry::Command { label: "&Copy", keys: "Ctrl+C", id: cmd::COPY, enabled: |s| s.selection && !s.rendered },
-    Entry::Command { label: "&Paste", keys: "Ctrl+V", id: cmd::PASTE, enabled: |s| s.can_paste && !s.read_only && !s.rendered },
-    Entry::Command { label: "Select &all", keys: "Ctrl+A", id: cmd::SELECT_ALL, enabled: |s| !s.rendered },
+    Entry::Command {
+        label: "Cu&t",
+        keys: "Ctrl+X",
+        id: cmd::CUT,
+        enabled: |s| s.selection && !s.read_only && !s.rendered,
+    },
+    Entry::Command {
+        label: "&Copy",
+        keys: "Ctrl+C",
+        id: cmd::COPY,
+        enabled: |s| s.selection && !s.rendered,
+    },
+    Entry::Command {
+        label: "&Paste",
+        keys: "Ctrl+V",
+        id: cmd::PASTE,
+        enabled: |s| s.can_paste && !s.read_only && !s.rendered,
+    },
+    Entry::Command {
+        label: "Select &all",
+        keys: "Ctrl+A",
+        id: cmd::SELECT_ALL,
+        enabled: |s| !s.rendered,
+    },
     Entry::Separator,
-    Entry::Command { label: "&Find\u{2026}", keys: "Ctrl+F", id: cmd::FIND, enabled: source },
-    Entry::Command { label: "R&eplace\u{2026}", keys: "Ctrl+H", id: cmd::REPLACE, enabled: source },
-    Entry::Command { label: "&Go to line\u{2026}", keys: "Ctrl+G", id: cmd::GO_TO_LINE, enabled: source },
+    Entry::Command {
+        label: "&Find\u{2026}",
+        keys: "Ctrl+F",
+        id: cmd::FIND,
+        enabled: source,
+    },
+    Entry::Command {
+        label: "R&eplace\u{2026}",
+        keys: "Ctrl+H",
+        id: cmd::REPLACE,
+        enabled: source,
+    },
+    Entry::Command {
+        label: "&Go to line\u{2026}",
+        keys: "Ctrl+G",
+        id: cmd::GO_TO_LINE,
+        enabled: source,
+    },
 ];
 
 pub const VIEW: &[Entry] = &[
-    Entry::Command { label: "&Rendered view", keys: "Ctrl+E", id: cmd::RENDERED_VIEW, enabled: |s| s.markdown },
-    Entry::Command { label: "&Word wrap", keys: "Alt+Z", id: cmd::WORD_WRAP, enabled: |s| s.wrap_allowed },
+    Entry::Command {
+        label: "&Rendered view",
+        keys: "Ctrl+E",
+        id: cmd::RENDERED_VIEW,
+        enabled: |s| s.markdown,
+    },
+    Entry::Command {
+        label: "&Word wrap",
+        keys: "Alt+Z",
+        id: cmd::WORD_WRAP,
+        enabled: |s| s.wrap_allowed,
+    },
     Entry::Separator,
-    Entry::Command { label: "Zoom &in", keys: "Ctrl++", id: cmd::ZOOM_IN, enabled: always },
-    Entry::Command { label: "Zoom &out", keys: "Ctrl+\u{2212}", id: cmd::ZOOM_OUT, enabled: always },
-    Entry::Command { label: "Reset &zoom", keys: "Ctrl+0", id: cmd::ZOOM_RESET, enabled: always },
+    Entry::Command {
+        label: "Zoom &in",
+        keys: "Ctrl++",
+        id: cmd::ZOOM_IN,
+        enabled: always,
+    },
+    Entry::Command {
+        label: "Zoom &out",
+        keys: "Ctrl+\u{2212}",
+        id: cmd::ZOOM_OUT,
+        enabled: always,
+    },
+    Entry::Command {
+        label: "Reset &zoom",
+        keys: "Ctrl+0",
+        id: cmd::ZOOM_RESET,
+        enabled: always,
+    },
 ];
 
 /// File, Edit, View, in the order of their buttons.
 pub const MENUS: [&[Entry]; 3] = [FILE, EDIT, VIEW];
 
 /// The `&` labels of `Encoding::MENU`.
-const ENCODING_LABELS: [&str; 5] = ["&UTF-8", "UTF-8 with &BOM", "UTF-16 &LE", "UTF-16 B&E", "&Windows-1252 (ANSI)"];
+const ENCODING_LABELS: [&str; 5] = [
+    "&UTF-8",
+    "UTF-8 with &BOM",
+    "UTF-16 &LE",
+    "UTF-16 B&E",
+    "&Windows-1252 (ANSI)",
+];
 /// The `&` labels of `Eol::MENU`.
 const EOL_LABELS: [&str; 3] = ["&LF", "C&RLF", "&CR"];
 
@@ -125,16 +261,31 @@ pub fn items(entries: &[Entry], state: &State) -> Vec<Item> {
     entries
         .iter()
         .map(|e| match e {
-            Entry::Command { label, keys, id, enabled } => Item::Command {
-                label: if keys.is_empty() { label.to_string() } else { format!("{label}\t{keys}") },
+            Entry::Command {
+                label,
+                keys,
+                id,
+                enabled,
+            } => Item::Command {
+                label: if keys.is_empty() {
+                    label.to_string()
+                } else {
+                    format!("{label}\t{keys}")
+                },
                 id: *id,
                 enabled: enabled(state),
                 // Word wrap is the one check mark; the others are radio choices.
                 checked: *id == cmd::WORD_WRAP && state.wrap && state.wrap_allowed,
             },
-            Entry::Sub { label, enabled, items } => {
-                Item::Sub { label: label.to_string(), enabled: enabled(state), items: items(state) }
-            }
+            Entry::Sub {
+                label,
+                enabled,
+                items,
+            } => Item::Sub {
+                label: label.to_string(),
+                enabled: enabled(state),
+                items: items(state),
+            },
             Entry::Separator => Item::Separator,
         })
         .collect()
@@ -146,7 +297,12 @@ fn encodings(s: &State) -> Vec<Item> {
     let mut items = Vec::new();
     if !Encoding::MENU.contains(&s.encoding) {
         let label = s.encoding.name().into();
-        items.push(Item::Command { label, id: cmd::ENCODING_KEEP, enabled: true, checked: true });
+        items.push(Item::Command {
+            label,
+            id: cmd::ENCODING_KEEP,
+            enabled: true,
+            checked: true,
+        });
         items.push(Item::Separator);
     }
     for (i, (e, label)) in Encoding::MENU.iter().zip(ENCODING_LABELS).enumerate() {
@@ -210,7 +366,9 @@ pub enum Bar {
 
 /// The menu whose access key is `c`: F, E or V.
 pub fn access_key(c: char) -> Option<usize> {
-    ['f', 'e', 'v'].iter().position(|k| *k == c.to_ascii_lowercase())
+    ['f', 'e', 'v']
+        .iter()
+        .position(|k| *k == c.to_ascii_lowercase())
 }
 
 fn step(at: usize, by: isize) -> usize {
@@ -324,7 +482,12 @@ fn keyboard_cues() -> bool {
     let mut on = BOOL(0);
     let got = unsafe {
         let flags = SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0);
-        SystemParametersInfoW(SPI_GETKEYBOARDCUES, 0, Some(&mut on as *mut BOOL as *mut _), flags)
+        SystemParametersInfoW(
+            SPI_GETKEYBOARDCUES,
+            0,
+            Some(&mut on as *mut BOOL as *mut _),
+            flags,
+        )
     };
     got.is_ok() && on.as_bool()
 }
@@ -339,7 +502,9 @@ fn key_of(vk: u16) -> Key {
         VK_ESCAPE => Key::Esc,
         VK_MENU => Key::Alt,
         VK_F10 => Key::F10,
-        _ if (b'A' as u16..=b'Z' as u16).contains(&vk) || (b'0' as u16..=b'9' as u16).contains(&vk) => {
+        _ if (b'A' as u16..=b'Z' as u16).contains(&vk)
+            || (b'0' as u16..=b'9' as u16).contains(&vk) =>
+        {
             Key::Letter(vk as u8 as char)
         }
         _ => Key::Other,
@@ -377,7 +542,10 @@ pub fn pre_translate(msg: &MSG) -> bool {
                 return true;
             }
             // Bit 30: a repeat while held.
-            if msg.message == WM_SYSKEYDOWN && VIRTUAL_KEY(vk) == VK_MENU && msg.lParam.0 & (1 << 30) == 0 {
+            if msg.message == WM_SYSKEYDOWN
+                && VIRTUAL_KEY(vk) == VK_MENU
+                && msg.lParam.0 & (1 << 30) == 0
+            {
                 update(a, |s| s.alt_held = true);
             }
             false
@@ -394,13 +562,15 @@ pub fn pre_translate(msg: &MSG) -> bool {
         }
         // Alt+F, E or V. Scintilla never hands WM_SYSCHAR to DefWindowProc,
         // so no SC_KEYMENU would follow.
-        WM_SYSCHAR if mode() == Mode::Idle => match char::from_u32(vk as u32).and_then(access_key) {
-            Some(at) => {
-                open(a, at, true);
-                true
+        WM_SYSCHAR if mode() == Mode::Idle => {
+            match char::from_u32(vk as u32).and_then(access_key) {
+                Some(at) => {
+                    open(a, at, true);
+                    true
+                }
+                None => false,
             }
-            None => false,
-        },
+        }
         WM_CHAR | WM_SYSCHAR | WM_DEADCHAR | WM_SYSDEADCHAR => matches!(mode(), Mode::Focused(_)),
         _ => false,
     }
@@ -445,14 +615,23 @@ pub fn open(a: &App, at: usize, keyboard: bool) {
         }
         let escaped = tracking.is_some_and(|t| t.escaped);
         update(a, |s| {
-            s.mode = if escaped && chosen == 0 { Mode::Focused(at) } else { Mode::Idle };
+            s.mode = if escaped && chosen == 0 {
+                Mode::Focused(at)
+            } else {
+                Mode::Idle
+            };
             s.alt_held = false;
         });
         // The mouse may have moved off the button while the popup held it.
         rehover(a);
         if chosen != 0 {
             unsafe {
-                SendMessageW(a.hwnd, WM_COMMAND, Some(WPARAM(chosen as usize)), Some(LPARAM(0)));
+                SendMessageW(
+                    a.hwnd,
+                    WM_COMMAND,
+                    Some(WPARAM(chosen as usize)),
+                    Some(LPARAM(0)),
+                );
             }
         }
     }
@@ -461,9 +640,20 @@ pub fn open(a: &App, at: usize, keyboard: bool) {
 /// Show one popup; the command picked (0 for none) and how it closed.
 fn track(a: &App, at: usize, keyboard: bool) -> (u16, Option<Tracking>) {
     let list = items(MENUS[at], &state_of(a));
-    let Some(menu) = build(&list) else { return (0, None) };
+    let Some(menu) = build(&list) else {
+        return (0, None);
+    };
     let button = a.ui.borrow().layout.menus[at];
-    let mut corners = [POINT { x: button.left, y: button.top }, POINT { x: button.right, y: button.bottom }];
+    let mut corners = [
+        POINT {
+            x: button.left,
+            y: button.top,
+        },
+        POINT {
+            x: button.right,
+            y: button.bottom,
+        },
+    ];
     unsafe {
         for p in &mut corners {
             let _ = ClientToScreen(a.hwnd, p);
@@ -472,13 +662,21 @@ fn track(a: &App, at: usize, keyboard: bool) -> (u16, Option<Tracking>) {
     let params = TPMPARAMS {
         cbSize: std::mem::size_of::<TPMPARAMS>() as u32,
         // Never cover the button: flipped above it if there is no room below.
-        rcExclude: RECT { left: corners[0].x, top: corners[0].y, right: corners[1].x, bottom: corners[1].y },
+        rcExclude: RECT {
+            left: corners[0].x,
+            top: corners[0].y,
+            right: corners[1].x,
+            bottom: corners[1].y,
+        },
     };
     TRACKING.with(|t| {
         *t.borrow_mut() = Some(Tracking {
             at,
             top: menu,
-            popup: Popup { in_submenu: false, on_submenu_item: false },
+            popup: Popup {
+                in_submenu: false,
+                on_submenu_item: false,
+            },
             next: None,
             escaped: false,
             mouse: cursor(),
@@ -488,7 +686,15 @@ fn track(a: &App, at: usize, keyboard: bool) -> (u16, Option<Tracking>) {
     let chosen = unsafe {
         let hook = SetWindowsHookExW(WH_MSGFILTER, Some(filter), None, GetCurrentThreadId()).ok();
         let flags = TPM_LEFTALIGN | TPM_TOPALIGN | TPM_VERTICAL | TPM_RETURNCMD;
-        let chosen = TrackPopupMenuEx(menu, flags.0, corners[0].x, corners[1].y, a.hwnd, Some(&params)).0;
+        let chosen = TrackPopupMenuEx(
+            menu,
+            flags.0,
+            corners[0].x,
+            corners[1].y,
+            a.hwnd,
+            Some(&params),
+        )
+        .0;
         if let Some(hook) = hook {
             let _ = UnhookWindowsHookEx(hook);
         }
@@ -501,10 +707,19 @@ fn track(a: &App, at: usize, keyboard: bool) -> (u16, Option<Tracking>) {
 /// `WM_ENTERMENULOOP`: the popup is open. Opened from the keyboard, a native
 /// menu bar selects the first item, so send the key now and not before.
 pub fn loop_entered(a: &App) {
-    let first = TRACKING.with(|t| t.borrow_mut().as_mut().is_some_and(|t| std::mem::take(&mut t.select_first)));
+    let first = TRACKING.with(|t| {
+        t.borrow_mut()
+            .as_mut()
+            .is_some_and(|t| std::mem::take(&mut t.select_first))
+    });
     if first {
         unsafe {
-            let _ = PostMessageW(Some(a.hwnd), WM_KEYDOWN, WPARAM(VK_DOWN.0 as usize), LPARAM(0));
+            let _ = PostMessageW(
+                Some(a.hwnd),
+                WM_KEYDOWN,
+                WPARAM(VK_DOWN.0 as usize),
+                LPARAM(0),
+            );
         }
     }
 }
@@ -533,7 +748,9 @@ unsafe extern "system" fn filter(code: i32, wp: WPARAM, lp: LPARAM) -> LRESULT {
             let msg = &*(lp.0 as *const MSG);
             // Releasing Alt after Alt+F would end the menu loop; a native
             // menu bar's popup stays open.
-            if matches!(msg.message, WM_KEYUP | WM_SYSKEYUP) && VIRTUAL_KEY(msg.wParam.0 as u16) == VK_MENU {
+            if matches!(msg.message, WM_KEYUP | WM_SYSKEYUP)
+                && VIRTUAL_KEY(msg.wParam.0 as u16) == VK_MENU
+            {
                 return LRESULT(1);
             }
             if let Some(end) = ends_popup(msg) {
@@ -569,7 +786,9 @@ fn ends_popup(msg: &MSG) -> Option<Option<(usize, bool)>> {
         }
         WM_MOUSEMOVE => {
             let moved = TRACKING.with(|t| {
-                t.borrow_mut().as_mut().is_some_and(|t| std::mem::replace(&mut t.mouse, msg.pt) != msg.pt)
+                t.borrow_mut()
+                    .as_mut()
+                    .is_some_and(|t| std::mem::replace(&mut t.mouse, msg.pt) != msg.pt)
             });
             match button_at(msg.pt) {
                 Some(to) if moved && to != at => Some(Some((to, false))),
@@ -609,12 +828,21 @@ fn build(items: &[Item]) -> Option<HMENU> {
         for item in items {
             let added = match item {
                 Item::Separator => AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null()),
-                Item::Command { label, id, enabled, checked } => {
+                Item::Command {
+                    label,
+                    id,
+                    enabled,
+                    checked,
+                } => {
                     let label = wide(label);
                     let mut info = MENUITEMINFOW {
                         cbSize: std::mem::size_of::<MENUITEMINFOW>() as u32,
                         fMask: MIIM_ID | MIIM_STRING | MIIM_STATE | MIIM_FTYPE,
-                        fType: if *checked && *id != cmd::WORD_WRAP { MFT_RADIOCHECK } else { MFT_STRING },
+                        fType: if *checked && *id != cmd::WORD_WRAP {
+                            MFT_RADIOCHECK
+                        } else {
+                            MFT_STRING
+                        },
                         fState: state_flags(*enabled, *checked),
                         wID: *id as u32,
                         dwTypeData: PWSTR(label.as_ptr() as *mut u16),
@@ -623,7 +851,11 @@ fn build(items: &[Item]) -> Option<HMENU> {
                     info.cch = label.len() as u32 - 1;
                     InsertMenuItemW(menu, u32::MAX, true, &info)
                 }
-                Item::Sub { label, enabled, items } => {
+                Item::Sub {
+                    label,
+                    enabled,
+                    items,
+                } => {
                     let Some(sub) = build(items) else { continue };
                     let label = wide(label);
                     let info = MENUITEMINFOW {
@@ -667,7 +899,14 @@ fn state_of(a: &App) -> State {
             // The Rendered view is read-only too (13).
             let rendered = t.view() == crate::tabs::View::Rendered;
             let read_only = t.read_only() || rendered;
-            (t.encoding(), t.eol(), read_only, t.is_untitled(), t.kind() == crate::tabs::Kind::Markdown, rendered)
+            (
+                t.encoding(),
+                t.eol(),
+                read_only,
+                t.is_untitled(),
+                t.kind() == crate::tabs::Kind::Markdown,
+                rendered,
+            )
         })
     };
     let wrap_allowed = findview::wrap_allowed(a);

@@ -1,7 +1,7 @@
 //! Title row, Notices, find bar and status bar: pure layout and hit testing, plus drawing (spec §4).
 
-pub mod notice;
 pub mod findbar;
+pub mod notice;
 mod paint;
 
 pub use paint::{FindView, Painter, TabView, View};
@@ -140,7 +140,9 @@ pub enum Edge {
 impl Hit {
     /// The caption button behind a non-client hit-test code, if any.
     pub fn caption_button(code: u32) -> Option<Hit> {
-        [Hit::Minimize, Hit::Maximize, Hit::Close].into_iter().find(|h| h.nc_code() == code)
+        [Hit::Minimize, Hit::Maximize, Hit::Close]
+            .into_iter()
+            .find(|h| h.nc_code() == code)
     }
 
     /// The Tab this piece belongs to: the Tab itself or its ×.
@@ -213,7 +215,10 @@ impl Status {
         }
         cells.push(eol.to_string());
         cells.push(encoding.to_string());
-        Status { note: String::new(), cells }
+        Status {
+            note: String::new(),
+            cells,
+        }
     }
 }
 
@@ -249,7 +254,12 @@ impl Frame {
 impl Layout {
     pub fn new(f: &Frame) -> Layout {
         let (w, h) = (f.width.max(0), f.height.max(0));
-        let band = |top: i32, bottom: i32| Rect { left: 0, top, right: w, bottom };
+        let band = |top: i32, bottom: i32| Rect {
+            left: 0,
+            top,
+            right: w,
+            bottom,
+        };
         let title_b = f.px(TITLE_H).min(h);
         let status_t = (h - f.px(STATUS_H)).max(title_b);
         let notice_b = (title_b + f.px(f.notice_h)).min(status_t);
@@ -271,7 +281,11 @@ impl Layout {
         let close_l = (w - bw).max(0);
         let max_l = (close_l - bw).max(0);
         let min_l = (max_l - bw).max(0);
-        let buttons = [rect(min_l, 0, max_l, title_b), rect(max_l, 0, close_l, title_b), rect(close_l, 0, w, title_b)];
+        let buttons = [
+            rect(min_l, 0, max_l, title_b),
+            rect(max_l, 0, close_l, title_b),
+            rect(close_l, 0, w, title_b),
+        ];
 
         let icon_l = f.px(ICON_L);
         let icon = centred(icon_l, icon_l + f.px(ICON), ICON);
@@ -292,22 +306,37 @@ impl Layout {
         let (gap, plus_w) = (f.px(GAP), f.px(PLUS_W));
         let fit_max = (min_l - gap - f.px(DRAG_MIN) - gap - plus_w - gap).max(strip_l);
         let n = f.tabs as i32;
-        let share = |room: i32| if n == 0 { 0 } else { ((room - (n - 1) * gap) / n).clamp(f.px(TAB_MIN_W), f.px(TAB_W)) };
+        let share = |room: i32| {
+            if n == 0 {
+                0
+            } else {
+                ((room - (n - 1) * gap) / n).clamp(f.px(TAB_MIN_W), f.px(TAB_W))
+            }
+        };
         let overflows = n * share(fit_max - strip_l) + (n - 1).max(0) * gap > fit_max - strip_l;
         let (tab_w, visible) = if overflows {
             let room = (fit_max - f.px(SCROLL_BUTTON) * 2 - gap - gap).max(strip_l) - strip_l;
             let visible = ((room + gap) / (f.px(TAB_MIN_W) + gap)).max(1);
-            (((room - (visible - 1) * gap) / visible).clamp(0, f.px(TAB_W)), visible)
+            (
+                ((room - (visible - 1) * gap) / visible).clamp(0, f.px(TAB_W)),
+                visible,
+            )
         } else {
             (share(fit_max - strip_l), n)
         };
         let pitch = tab_w + gap;
         let first_max = (n - visible).max(0);
-        let first = if pitch > 0 { ((f.tab_scroll + pitch / 2).div_euclid(pitch)).clamp(0, first_max) } else { 0 };
+        let first = if pitch > 0 {
+            ((f.tab_scroll + pitch / 2).div_euclid(pitch)).clamp(0, first_max)
+        } else {
+            0
+        };
         let tab_scroll = first * pitch;
         let tab_t = title_b - f.px(1.0) - f.px(TAB_H);
         let tab_l = |i: i32| strip_l - tab_scroll + i * pitch;
-        let tabs: Vec<Rect> = (0..n).map(|i| rect(tab_l(i), tab_t, tab_l(i) + tab_w, title_b)).collect();
+        let tabs: Vec<Rect> = (0..n)
+            .map(|i| rect(tab_l(i), tab_t, tab_l(i) + tab_w, title_b))
+            .collect();
         let tab_closes = tabs
             .iter()
             .map(|t| {
@@ -320,9 +349,15 @@ impl Layout {
         let plus_l = strip_r + gap;
         let plus = rect(plus_l, tab_t, plus_l + plus_w, title_b - f.px(1.0));
         let scroll = overflows.then(|| {
-            let (bw, top) = (f.px(SCROLL_BUTTON), tab_t + (f.px(TAB_H) - f.px(SCROLL_BUTTON)) / 2);
+            let (bw, top) = (
+                f.px(SCROLL_BUTTON),
+                tab_t + (f.px(TAB_H) - f.px(SCROLL_BUTTON)) / 2,
+            );
             let left = plus.right + gap;
-            [rect(left, top, left + bw, top + bw), rect(left + bw + gap, top, left + 2 * bw + gap, top + bw)]
+            [
+                rect(left, top, left + bw, top + bw),
+                rect(left + bw + gap, top, left + 2 * bw + gap, top + bw),
+            ]
         });
         let drag_l = scroll.map_or(plus.right, |s| s[1].right);
 
@@ -363,7 +398,12 @@ impl Layout {
             .rev()
             .map(|w| {
                 let left = (right - w - 2 * self.cell_pad).max(s.left);
-                let r = Rect { left, top: s.top, right, bottom: s.bottom };
+                let r = Rect {
+                    left,
+                    top: s.top,
+                    right,
+                    bottom: s.bottom,
+                };
                 right = left;
                 r
             })
@@ -377,7 +417,12 @@ impl Layout {
         let s = self.status;
         let right = cells.first().map_or(s.right - self.cell_pad, |c| c.left);
         let left = (s.left + self.cell_pad).min(right);
-        Rect { left, top: s.top, right, bottom: s.bottom }
+        Rect {
+            left,
+            top: s.top,
+            right,
+            bottom: s.bottom,
+        }
     }
 
     /// The `tab_scroll` that shows Tab `i`, moving as little as possible.
@@ -447,10 +492,14 @@ impl Layout {
             }
             return Hit::Caption;
         }
-        [(self.notice, Hit::Notice), (self.find, Hit::Find), (self.editor, Hit::Editor)]
-            .into_iter()
-            .find(|(r, _)| at(r))
-            .map_or(Hit::Status, |(_, hit)| hit)
+        [
+            (self.notice, Hit::Notice),
+            (self.find, Hit::Find),
+            (self.editor, Hit::Editor),
+        ]
+        .into_iter()
+        .find(|(r, _)| at(r))
+        .map_or(Hit::Status, |(_, hit)| hit)
     }
 
     /// The resize edge under a point of a restored Window, if any.
@@ -479,11 +528,21 @@ mod tests {
     use super::*;
 
     fn frame(width: i32, height: i32, scale: f32) -> Frame {
-        Frame { width, height, scale, ..Frame::default() }
+        Frame {
+            width,
+            height,
+            scale,
+            ..Frame::default()
+        }
     }
 
     fn r(left: i32, top: i32, right: i32, bottom: i32) -> Rect {
-        Rect { left, top, right, bottom }
+        Rect {
+            left,
+            top,
+            right,
+            bottom,
+        }
     }
 
     #[test]
@@ -497,7 +556,11 @@ mod tests {
     }
 
     fn row(tabs: usize, width: i32) -> Frame {
-        Frame { tabs, menu_text: [22.0, 22.0, 26.0], ..frame(width, 700, 1.0) }
+        Frame {
+            tabs,
+            menu_text: [22.0, 22.0, 26.0],
+            ..frame(width, 700, 1.0)
+        }
     }
 
     #[test]
@@ -505,14 +568,20 @@ mod tests {
         let l = Layout::new(&row(1, 1000));
         assert_eq!(l.icon, r(14, 13, 30, 29));
         // Text width + 9 px padding each side, from x = 44.
-        assert_eq!(l.menus, [r(44, 9, 84, 33), r(84, 9, 124, 33), r(124, 9, 168, 33)]);
+        assert_eq!(
+            l.menus,
+            [r(44, 9, 84, 33), r(84, 9, 124, 33), r(124, 9, 168, 33)]
+        );
         assert_eq!(l.divider, r(176, 13, 177, 29));
         // One tab at its full 178 px, bottom-aligned, 31 px tall, joined to the editor.
         assert_eq!(l.tabs, vec![r(185, 10, 363, 42)]);
         assert_eq!(l.tab_closes, vec![r(335, 16, 353, 34)]);
         assert_eq!(l.plus, r(365, 10, 395, 41));
         assert_eq!(l.drag, r(395, 0, 862, 42));
-        assert_eq!(l.buttons, [r(862, 0, 908, 42), r(908, 0, 954, 42), r(954, 0, 1000, 42)]);
+        assert_eq!(
+            l.buttons,
+            [r(862, 0, 908, 42), r(908, 0, 954, 42), r(954, 0, 1000, 42)]
+        );
     }
 
     #[test]
@@ -554,7 +623,10 @@ mod tests {
     }
 
     fn restored() -> Layout {
-        Layout::new(&Frame { resize_border: 8, ..row(1, 1000) })
+        Layout::new(&Frame {
+            resize_border: 8,
+            ..row(1, 1000)
+        })
     }
 
     #[test]
@@ -607,7 +679,12 @@ mod tests {
 
     #[test]
     fn bands_below_the_title_row() {
-        let f = Frame { resize_border: 8, notice_h: 38.0, find_h: 40.0, ..row(1, 1000) };
+        let f = Frame {
+            resize_border: 8,
+            notice_h: 38.0,
+            find_h: 40.0,
+            ..row(1, 1000)
+        };
         let l = Layout::new(&f);
         assert_eq!(l.hit_test(500, 50), Hit::Notice);
         assert_eq!(l.hit_test(500, 100), Hit::Find);
@@ -617,7 +694,11 @@ mod tests {
 
     #[test]
     fn maximised_has_no_resize_edges_and_buttons_reach_the_screen_edge() {
-        let l = Layout::new(&Frame { resize_border: 8, maximized: true, ..row(1, 1000) });
+        let l = Layout::new(&Frame {
+            resize_border: 8,
+            maximized: true,
+            ..row(1, 1000)
+        });
         assert_eq!(l.hit_test(999, 0), Hit::Close);
         assert_eq!(l.hit_test(500, 2), Hit::Caption);
         assert_eq!(l.hit_test(-3, 300), Hit::Nowhere);
@@ -626,7 +707,10 @@ mod tests {
 
     #[test]
     fn a_tab_past_the_strip_is_not_hit() {
-        let l = Layout::new(&Frame { resize_border: 8, ..row(8, 1000) });
+        let l = Layout::new(&Frame {
+            resize_border: 8,
+            ..row(8, 1000)
+        });
         // Tab 3 is the last whole one in the strip; tab 4 starts past it.
         assert_eq!(l.hit_test(650, 25), Hit::Tab(3));
         assert_eq!(l.hit_test(700, 25), Hit::TabClose(3));
@@ -636,7 +720,11 @@ mod tests {
 
     #[test]
     fn scrolling_moves_whole_tabs_and_hides_those_past_the_strip() {
-        let l = Layout::new(&Frame { resize_border: 8, tab_scroll: 135, ..row(8, 1000) });
+        let l = Layout::new(&Frame {
+            resize_border: 8,
+            tab_scroll: 135,
+            ..row(8, 1000)
+        });
         assert_eq!(l.tab_scroll, 135);
         assert_eq!(l.tabs[0], r(50, 10, 183, 42));
         assert_eq!(l.tabs[1], r(185, 10, 318, 42));
@@ -648,15 +736,46 @@ mod tests {
     #[test]
     fn the_scroll_offset_snaps_to_whole_tabs_and_stops_at_either_end() {
         // A Tab and its gap: 135 px. Eight Tabs, four in view.
-        assert_eq!(Layout::new(&Frame { tab_scroll: 200, ..row(8, 1000) }).tab_scroll, 135);
-        assert_eq!(Layout::new(&Frame { tab_scroll: 210, ..row(8, 1000) }).tab_scroll, 270);
-        let far = Layout::new(&Frame { tab_scroll: 10_000, ..row(8, 1000) });
+        assert_eq!(
+            Layout::new(&Frame {
+                tab_scroll: 200,
+                ..row(8, 1000)
+            })
+            .tab_scroll,
+            135
+        );
+        assert_eq!(
+            Layout::new(&Frame {
+                tab_scroll: 210,
+                ..row(8, 1000)
+            })
+            .tab_scroll,
+            270
+        );
+        let far = Layout::new(&Frame {
+            tab_scroll: 10_000,
+            ..row(8, 1000)
+        });
         assert_eq!(far.tab_scroll, 540);
         assert_eq!(far.tabs[4].left, far.strip.left);
         assert_eq!(far.tabs[7].right, far.strip.right);
-        assert_eq!(Layout::new(&Frame { tab_scroll: -5, ..row(8, 1000) }).tab_scroll, 0);
+        assert_eq!(
+            Layout::new(&Frame {
+                tab_scroll: -5,
+                ..row(8, 1000)
+            })
+            .tab_scroll,
+            0
+        );
         // Tabs that fit never scroll.
-        assert_eq!(Layout::new(&Frame { tab_scroll: 50, ..row(3, 1000) }).tab_scroll, 0);
+        assert_eq!(
+            Layout::new(&Frame {
+                tab_scroll: 50,
+                ..row(3, 1000)
+            })
+            .tab_scroll,
+            0
+        );
     }
 
     #[test]
@@ -665,7 +784,10 @@ mod tests {
         assert_eq!(start.reveal(3), 0, "already in view");
         assert_eq!(start.reveal(7), 540, "it becomes the last in view");
         assert_eq!(start.reveal(5), 270);
-        let end = Layout::new(&Frame { tab_scroll: 540, ..row(8, 1000) });
+        let end = Layout::new(&Frame {
+            tab_scroll: 540,
+            ..row(8, 1000)
+        });
         assert_eq!(end.reveal(4), 540);
         assert_eq!(end.reveal(1), 135, "it becomes the first in view");
         assert_eq!(end.reveal(0), 0);
@@ -678,10 +800,16 @@ mod tests {
         assert_eq!(start.scroll_step(1), 135);
         assert_eq!(start.scroll_step(-1), 0);
         assert_eq!(start.can_scroll(), (false, true));
-        let near_end = Layout::new(&Frame { tab_scroll: 405, ..row(8, 1000) });
+        let near_end = Layout::new(&Frame {
+            tab_scroll: 405,
+            ..row(8, 1000)
+        });
         assert_eq!(near_end.scroll_step(1), 540);
         assert_eq!(near_end.scroll_step(-1), 270);
-        let end = Layout::new(&Frame { tab_scroll: 540, ..row(8, 1000) });
+        let end = Layout::new(&Frame {
+            tab_scroll: 540,
+            ..row(8, 1000)
+        });
         assert_eq!(end.scroll_step(1), 540);
         assert_eq!(end.can_scroll(), (true, false));
         assert_eq!(Layout::new(&row(3, 1000)).can_scroll(), (false, false));
@@ -689,7 +817,10 @@ mod tests {
 
     #[test]
     fn scroll_buttons_are_hit_and_light_up() {
-        let l = Layout::new(&Frame { resize_border: 8, ..row(8, 1000) });
+        let l = Layout::new(&Frame {
+            resize_border: 8,
+            ..row(8, 1000)
+        });
         assert_eq!(l.hit_test(770, 25), Hit::ScrollLeft);
         assert_eq!(l.hit_test(795, 25), Hit::ScrollRight);
         // Between the two, and above them: caption.
@@ -743,7 +874,10 @@ mod tests {
 
     #[test]
     fn zoom_shows_only_when_not_100_percent() {
-        assert_eq!(Status::source(1, 1, "CRLF", "UTF-16 LE", 120).cells, ["Ln 1, Col 1", "120%", "CRLF", "UTF-16 LE"]);
+        assert_eq!(
+            Status::source(1, 1, "CRLF", "UTF-16 LE", 120).cells,
+            ["Ln 1, Col 1", "120%", "CRLF", "UTF-16 LE"]
+        );
         assert_eq!(Status::source(1, 1, "LF", "UTF-8", 100).cells.len(), 3);
     }
 
@@ -751,7 +885,14 @@ mod tests {
     fn status_cells_are_right_aligned_with_14_px_padding() {
         let l = Layout::new(&frame(1000, 700, 1.0));
         let cells = l.status_cells(&[80, 14, 36]);
-        assert_eq!(cells, [r(786, 674, 894, 700), r(894, 674, 936, 700), r(936, 674, 1000, 700)]);
+        assert_eq!(
+            cells,
+            [
+                r(786, 674, 894, 700),
+                r(894, 674, 936, 700),
+                r(936, 674, 1000, 700)
+            ]
+        );
         // The note takes what is left on the left.
         assert_eq!(l.status_note(&cells), r(14, 674, 786, 700));
         assert_eq!(l.status_note(&[]), r(14, 674, 986, 700));
@@ -768,17 +909,34 @@ mod tests {
 
     #[test]
     fn only_clickable_pieces_light_up_on_hover() {
-        for hit in [Hit::Menu(1), Hit::Tab(0), Hit::TabClose(0), Hit::NewTab, Hit::Close] {
+        for hit in [
+            Hit::Menu(1),
+            Hit::Tab(0),
+            Hit::TabClose(0),
+            Hit::NewTab,
+            Hit::Close,
+        ] {
             assert!(hit.lights_up(), "{hit:?}");
         }
-        for hit in [Hit::Caption, Hit::Icon, Hit::Editor, Hit::Status, Hit::Resize(Edge::Top), Hit::Nowhere] {
+        for hit in [
+            Hit::Caption,
+            Hit::Icon,
+            Hit::Editor,
+            Hit::Status,
+            Hit::Resize(Edge::Top),
+            Hit::Nowhere,
+        ] {
             assert!(!hit.lights_up(), "{hit:?}");
         }
     }
 
     #[test]
     fn notice_and_find_bar_push_the_editor_down() {
-        let f = Frame { notice_h: 38.0, find_h: 76.0, ..frame(1000, 700, 1.0) };
+        let f = Frame {
+            notice_h: 38.0,
+            find_h: 76.0,
+            ..frame(1000, 700, 1.0)
+        };
         let l = Layout::new(&f);
         assert_eq!(l.notice, r(0, 42, 1000, 80));
         assert_eq!(l.find, r(0, 80, 1000, 156));
@@ -796,7 +954,10 @@ mod tests {
 
     #[test]
     fn a_tiny_window_never_inverts_a_band() {
-        let l = Layout::new(&Frame { notice_h: 38.0, ..frame(10, 50, 1.0) });
+        let l = Layout::new(&Frame {
+            notice_h: 38.0,
+            ..frame(10, 50, 1.0)
+        });
         for b in [l.title, l.notice, l.find, l.editor, l.status] {
             assert!(b.top <= b.bottom && b.left <= b.right, "{b:?}");
         }

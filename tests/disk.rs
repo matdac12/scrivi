@@ -26,7 +26,13 @@ fn instance() -> String {
 }
 
 fn resident() -> Option<HWND> {
-    unsafe { FindWindowW(&HSTRING::from(format!("Scrivi.Window.{}", instance())), PCWSTR::null()) }.ok()
+    unsafe {
+        FindWindowW(
+            &HSTRING::from(format!("Scrivi.Window.{}", instance())),
+            PCWSTR::null(),
+        )
+    }
+    .ok()
 }
 
 fn wait_until(what: &str, mut f: impl FnMut() -> bool) {
@@ -66,7 +72,10 @@ impl Run {
 
     fn editor(&self) -> HashMap<String, String> {
         let text = std::fs::read_to_string(self.dir.join("editor.txt")).unwrap_or_default();
-        text.lines().filter_map(|l| l.split_once('=')).map(|(k, v)| (k.into(), v.into())).collect()
+        text.lines()
+            .filter_map(|l| l.split_once('='))
+            .map(|(k, v)| (k.into(), v.into()))
+            .collect()
     }
 
     fn field(&self, key: &str) -> String {
@@ -75,7 +84,15 @@ impl Run {
 }
 
 fn save() {
-    unsafe { PostMessageW(Some(resident().expect("the resident")), WM_COMMAND, WPARAM(SAVE), LPARAM(0)) }.unwrap();
+    unsafe {
+        PostMessageW(
+            Some(resident().expect("the resident")),
+            WM_COMMAND,
+            WPARAM(SAVE),
+            LPARAM(0),
+        )
+    }
+    .unwrap();
 }
 
 #[test]
@@ -89,7 +106,9 @@ fn a_rewrite_reloads_a_save_is_no_disk_change_and_a_deleted_file_keeps_its_text(
     std::fs::write(&file, "# one\n").unwrap();
 
     let _resident = Resident(run.scrivi(&file).spawn().unwrap());
-    wait_until("the file shown", || run.field("name") == "notes.md" && run.field("length") == "6");
+    wait_until("the file shown", || {
+        run.field("name") == "notes.md" && run.field("length") == "6"
+    });
     let loads = |run: &Run| run.field("loads").parse::<usize>().unwrap();
 
     // Rewritten from outside (what PowerShell's Set-Content does): reloads on its own.
@@ -97,7 +116,11 @@ fn a_rewrite_reloads_a_save_is_no_disk_change_and_a_deleted_file_keeps_its_text(
     let t = Instant::now();
     std::fs::write(&file, "# two, and longer\n").unwrap();
     wait_until("the reload", || run.field("length") == "18");
-    assert!(t.elapsed() < Duration::from_secs(2), "reloaded after {:?}", t.elapsed());
+    assert!(
+        t.elapsed() < Duration::from_secs(2),
+        "reloaded after {:?}",
+        t.elapsed()
+    );
     assert_eq!(run.field("notice"), "none");
     assert_eq!(loads(&run), first_loads + 1);
 
@@ -107,21 +130,38 @@ fn a_rewrite_reloads_a_save_is_no_disk_change_and_a_deleted_file_keeps_its_text(
     save();
     std::thread::sleep(Duration::from_millis(3000));
     assert_eq!(loads(&run), before_save, "the own save reloaded the Tab");
-    assert_eq!((run.field("notice").as_str(), run.field("unsaved").as_str()), ("none", "false"));
-    assert_eq!(std::fs::read_to_string(&file).unwrap(), "# two, and longer\n");
+    assert_eq!(
+        (run.field("notice").as_str(), run.field("unsaved").as_str()),
+        ("none", "false")
+    );
+    assert_eq!(
+        std::fs::read_to_string(&file).unwrap(),
+        "# two, and longer\n"
+    );
 
     // Deleted: the text stays, marked unsaved, with the Notice.
     std::fs::remove_file(&file).unwrap();
-    wait_until("the deleted-on-disk Notice", || run.field("notice") == "DeletedOnDisk");
-    assert_eq!((run.field("unsaved").as_str(), run.field("length").as_str()), ("true", "18"));
+    wait_until("the deleted-on-disk Notice", || {
+        run.field("notice") == "DeletedOnDisk"
+    });
+    assert_eq!(
+        (run.field("unsaved").as_str(), run.field("length").as_str()),
+        ("true", "18")
+    );
 
     // Save writes the file again at its old path, and the Notice goes.
     save();
     wait_until("the file written again", || file.exists());
     wait_until("the Notice gone", || run.field("notice") == "none");
-    assert_eq!(std::fs::read_to_string(&file).unwrap(), "# two, and longer\n");
+    assert_eq!(
+        std::fs::read_to_string(&file).unwrap(),
+        "# two, and longer\n"
+    );
     std::thread::sleep(Duration::from_millis(2000));
-    assert_eq!((run.field("notice").as_str(), run.field("unsaved").as_str()), ("none", "false"));
+    assert_eq!(
+        (run.field("notice").as_str(), run.field("unsaved").as_str()),
+        ("none", "false")
+    );
 
     drop(_resident);
     wait_until("the window to go away", || resident().is_none());

@@ -16,7 +16,10 @@ thread_local! {
 
 /// The Notice the active Tab shows, if any, with the mouse over it.
 pub fn spec(tabs: &Tabs) -> Option<Spec> {
-    let shown = tabs.active().and_then(|id| tabs.get(id)).and_then(|tab| Some((tab, tab.notice()?)));
+    let shown = tabs
+        .active()
+        .and_then(|id| tabs.get(id))
+        .and_then(|tab| Some((tab, tab.notice()?)));
     let Some((tab, shown)) = shown else {
         // Nothing shows: no mouse state carries over to the next Notice.
         MOUSE.set(Mouse::default());
@@ -49,19 +52,37 @@ fn over(a: &App, x: i32, y: i32) -> Option<Hit> {
 
 /// The mouse moved, anywhere in the Window.
 pub fn moved(a: &App, x: i32, y: i32) {
-    set(a, Mouse { over: over(a, x, y), ..MOUSE.get() });
+    set(
+        a,
+        Mouse {
+            over: over(a, x, y),
+            ..MOUSE.get()
+        },
+    );
 }
 
 /// The mouse left the Window.
 pub fn left(a: &App) {
-    set(a, Mouse { over: None, ..MOUSE.get() });
+    set(
+        a,
+        Mouse {
+            over: None,
+            ..MOUSE.get()
+        },
+    );
 }
 
 /// The mouse went down at `(x, y)` in the Notice band: a button or the ×
 /// shows pressed, and holds the mouse until it comes up.
 pub fn press(a: &App, x: i32, y: i32) {
     let Some(hit) = over(a, x, y) else { return };
-    set(a, Mouse { over: Some(hit), down: Some(hit) });
+    set(
+        a,
+        Mouse {
+            over: Some(hit),
+            down: Some(hit),
+        },
+    );
     unsafe {
         SetCapture(a.hwnd);
     }
@@ -69,7 +90,13 @@ pub fn press(a: &App, x: i32, y: i32) {
 
 /// The press ended without a click (the capture was lost).
 pub fn cancel(a: &App) {
-    set(a, Mouse { down: None, ..MOUSE.get() });
+    set(
+        a,
+        Mouse {
+            down: None,
+            ..MOUSE.get()
+        },
+    );
 }
 
 /// The mouse came up at `(x, y)`. Ask the Tab for the button's action only if
@@ -80,16 +107,26 @@ pub fn release(a: &App, x: i32, y: i32) {
         return;
     }
     let at = over(a, x, y);
-    set(a, Mouse { over: at, down: None });
+    set(
+        a,
+        Mouse {
+            over: at,
+            down: None,
+        },
+    );
     unsafe {
         if GetCapture() == a.hwnd {
             // Sends WM_CAPTURECHANGED: nothing may be borrowed here.
             let _ = ReleaseCapture();
         }
     }
-    let Some(hit) = Mouse::released_on(down, at) else { return };
+    let Some(hit) = Mouse::released_on(down, at) else {
+        return;
+    };
     let Some((spec, _)) = parts(a) else { return };
-    let Some(id) = a.tabs.borrow().active() else { return };
+    let Some(id) = a.tabs.borrow().active() else {
+        return;
+    };
     if let Some(action) = spec.action(hit) {
         command(a, |t| t.notice_action(id, action));
     }

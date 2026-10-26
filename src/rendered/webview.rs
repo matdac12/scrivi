@@ -25,14 +25,19 @@ use webview2_com::Microsoft::Web::WebView2::Win32::*;
 use webview2_com::{
     take_pwstr, AcceleratorKeyPressedEventHandler, CoreWebView2EnvironmentOptions,
     CreateCoreWebView2ControllerCompletedHandler, CreateCoreWebView2EnvironmentCompletedHandler,
-    NavigationCompletedEventHandler, NavigationStartingEventHandler, NewWindowRequestedEventHandler,
+    NavigationCompletedEventHandler, NavigationStartingEventHandler,
+    NewWindowRequestedEventHandler,
 };
 use windows::core::{Interface, HSTRING, PCWSTR, PWSTR};
 use windows::Win32::Foundation::{HWND, LPARAM, RECT, WPARAM};
 use windows::Win32::System::Com::{CoInitializeEx, CoTaskMemFree, COINIT_APARTMENTTHREADED};
-use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, VK_CONTROL, VK_ESCAPE, VK_F10, VK_MENU, VK_SHIFT};
+use windows::Win32::UI::Input::KeyboardAndMouse::{
+    GetKeyState, VK_CONTROL, VK_ESCAPE, VK_F10, VK_MENU, VK_SHIFT,
+};
 use windows::Win32::UI::Shell::{FOLDERID_Documents, SHGetKnownFolderPath, KF_FLAG_DEFAULT};
-use windows::Win32::UI::WindowsAndMessaging::{PostMessageW, ACCEL, FALT, FCONTROL, FSHIFT, FVIRTKEY, SC_KEYMENU, WM_COMMAND, WM_SYSCOMMAND};
+use windows::Win32::UI::WindowsAndMessaging::{
+    PostMessageW, ACCEL, FALT, FCONTROL, FSHIFT, FVIRTKEY, SC_KEYMENU, WM_COMMAND, WM_SYSCOMMAND,
+};
 
 use super::{Page, HOST};
 use crate::proto::{WM_RENDERED_FAILED, WM_RENDERED_LINK, WM_RENDERED_SHOWN};
@@ -205,8 +210,14 @@ pub fn painted() -> bool {
 
 /// Give the page the keyboard focus, if it is on screen.
 pub fn focus() -> bool {
-    let Some(live) = with(ready).filter(|l| l.visible) else { return false };
-    unsafe { live.controller.MoveFocus(COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC).is_ok() }
+    let Some(live) = with(ready).filter(|l| l.visible) else {
+        return false;
+    };
+    unsafe {
+        live.controller
+            .MoveFocus(COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC)
+            .is_ok()
+    }
 }
 
 fn ready(h: &mut Host) -> Option<Live> {
@@ -274,7 +285,8 @@ fn navigate(live: &Live, page: &Page, key: u64, hwnd: HWND) {
         let html = HSTRING::from(page.html.as_str());
         let navigated = live.webview.NavigateToString(&html).is_ok();
         if !navigated {
-            nav.render_pending.set(nav.render_pending.get().saturating_sub(1));
+            nav.render_pending
+                .set(nav.render_pending.get().saturating_sub(1));
         }
         let root = page.root.clone();
         with(|h| {
@@ -324,36 +336,59 @@ fn create(generation: u64) {
         let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
         let options = CoreWebView2EnvironmentOptions::default();
         // Edge's mini menu and SmartScreen have nothing to do on a local page.
-        options.set_additional_browser_arguments("--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection".into());
+        options.set_additional_browser_arguments(
+            "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection".into(),
+        );
         let options: ICoreWebView2EnvironmentOptions = options.into();
-        let handler = CreateCoreWebView2EnvironmentCompletedHandler::create(Box::new(move |result, env| {
-            on_environment(generation, result, env);
-            Ok(())
-        }));
-        let folder = user_data_folder().map(|f| HSTRING::from(f.as_os_str())).unwrap_or_default();
-        let folder = if folder.is_empty() { PCWSTR::null() } else { PCWSTR(folder.as_ptr()) };
-        if CreateCoreWebView2EnvironmentWithOptions(PCWSTR::null(), folder, &options, &handler).is_err() {
+        let handler =
+            CreateCoreWebView2EnvironmentCompletedHandler::create(Box::new(move |result, env| {
+                on_environment(generation, result, env);
+                Ok(())
+            }));
+        let folder = user_data_folder()
+            .map(|f| HSTRING::from(f.as_os_str()))
+            .unwrap_or_default();
+        let folder = if folder.is_empty() {
+            PCWSTR::null()
+        } else {
+            PCWSTR(folder.as_ptr())
+        };
+        if CreateCoreWebView2EnvironmentWithOptions(PCWSTR::null(), folder, &options, &handler)
+            .is_err()
+        {
             fail(generation);
         }
     }
 }
 
-fn on_environment(generation: u64, result: windows::core::Result<()>, env: Option<ICoreWebView2Environment>) {
+fn on_environment(
+    generation: u64,
+    result: windows::core::Result<()>,
+    env: Option<ICoreWebView2Environment>,
+) {
     if !is_current(generation) {
         return;
     }
-    let Some(env) = env.filter(|_| result.is_ok()) else { return fail(generation) };
+    let Some(env) = env.filter(|_| result.is_ok()) else {
+        return fail(generation);
+    };
     let hwnd = with(|h| h.hwnd);
-    let handler = CreateCoreWebView2ControllerCompletedHandler::create(Box::new(move |result, controller| {
-        on_controller(generation, result, controller);
-        Ok(())
-    }));
+    let handler = CreateCoreWebView2ControllerCompletedHandler::create(Box::new(
+        move |result, controller| {
+            on_controller(generation, result, controller);
+            Ok(())
+        },
+    ));
     if unsafe { env.CreateCoreWebView2Controller(hwnd, &handler) }.is_err() {
         fail(generation);
     }
 }
 
-fn on_controller(generation: u64, result: windows::core::Result<()>, controller: Option<ICoreWebView2Controller>) {
+fn on_controller(
+    generation: u64,
+    result: windows::core::Result<()>,
+    controller: Option<ICoreWebView2Controller>,
+) {
     if !is_current(generation) {
         // Closed while it was being made: close it now, unshown.
         if let Some(controller) = controller {
@@ -363,7 +398,9 @@ fn on_controller(generation: u64, result: windows::core::Result<()>, controller:
         }
         return;
     }
-    let Some(controller) = controller.filter(|_| result.is_ok()) else { return fail(generation) };
+    let Some(controller) = controller.filter(|_| result.is_ok()) else {
+        return fail(generation);
+    };
     let (hwnd, keys, esc, bounds) = with(|h| (h.hwnd, Rc::clone(&h.keys), h.esc, h.bounds));
     let Ok(live) = (unsafe { configure(controller.clone(), hwnd, keys, esc, bounds) }) else {
         unsafe {
@@ -387,7 +424,12 @@ unsafe fn configure(
         controller.SetIsVisible(false)?;
         controller.SetBounds(bounds)?;
         if let Ok(c2) = controller.cast::<ICoreWebView2Controller2>() {
-            let _ = c2.SetDefaultBackgroundColor(COREWEBVIEW2_COLOR { A: 255, R: 255, G: 255, B: 255 });
+            let _ = c2.SetDefaultBackgroundColor(COREWEBVIEW2_COLOR {
+                A: 255,
+                R: 255,
+                G: 255,
+                B: 255,
+            });
         }
         // A file dropped on the page must not navigate to it.
         if let Ok(c4) = controller.cast::<ICoreWebView2Controller4>() {
@@ -469,8 +511,10 @@ unsafe fn configure(
                 let Some(args) = args else { return Ok(()) };
                 let mut kind = COREWEBVIEW2_KEY_EVENT_KIND::default();
                 args.KeyEventKind(&mut kind)?;
-                let is_down = kind == COREWEBVIEW2_KEY_EVENT_KIND_KEY_DOWN || kind == COREWEBVIEW2_KEY_EVENT_KIND_SYSTEM_KEY_DOWN;
-                let is_up = kind == COREWEBVIEW2_KEY_EVENT_KIND_KEY_UP || kind == COREWEBVIEW2_KEY_EVENT_KIND_SYSTEM_KEY_UP;
+                let is_down = kind == COREWEBVIEW2_KEY_EVENT_KIND_KEY_DOWN
+                    || kind == COREWEBVIEW2_KEY_EVENT_KIND_SYSTEM_KEY_DOWN;
+                let is_up = kind == COREWEBVIEW2_KEY_EVENT_KIND_KEY_UP
+                    || kind == COREWEBVIEW2_KEY_EVENT_KIND_SYSTEM_KEY_UP;
                 if !is_down && !is_up {
                     return Ok(());
                 }
@@ -492,13 +536,20 @@ unsafe fn configure(
                 }
                 alt_alone.set(false);
                 let down = |k: u16| GetKeyState(k as i32) < 0;
-                let pressed = Pressed { vk, ctrl: down(VK_CONTROL.0), shift: down(VK_SHIFT.0), alt: down(VK_MENU.0) };
+                let pressed = Pressed {
+                    vk,
+                    ctrl: down(VK_CONTROL.0),
+                    shift: down(VK_SHIFT.0),
+                    alt: down(VK_MENU.0),
+                };
                 if let Some(ch) = menu_key(pressed) {
                     args.SetHandled(true)?;
                     post(hwnd, WM_SYSCOMMAND, SC_KEYMENU as usize, ch);
                     return Ok(());
                 }
-                let Some(command) = command_for(&keys, esc, pressed) else { return Ok(()) };
+                let Some(command) = command_for(&keys, esc, pressed) else {
+                    return Ok(());
+                };
                 args.SetHandled(true)?;
                 let mut status = COREWEBVIEW2_PHYSICAL_KEY_STATUS::default();
                 args.PhysicalKeyStatus(&mut status)?;
@@ -510,7 +561,14 @@ unsafe fn configure(
             }));
             controller.add_AcceleratorKeyPressed(&handler, &mut token)?;
         }
-        Ok(Live { controller, webview, nav, root: None, loaded: None, visible: false })
+        Ok(Live {
+            controller,
+            webview,
+            nav,
+            root: None,
+            loaded: None,
+            visible: false,
+        })
     }
 }
 
@@ -533,7 +591,8 @@ pub fn menu_key(p: Pressed) -> Option<isize> {
         return Some(0);
     }
     let c = char::from_u32(p.vk).filter(char::is_ascii_alphabetic)?;
-    (p.alt && matches!(c.to_ascii_lowercase(), 'f' | 'e' | 'v')).then(|| c.to_ascii_lowercase() as isize)
+    (p.alt && matches!(c.to_ascii_lowercase(), 'f' | 'e' | 'v'))
+        .then(|| c.to_ascii_lowercase() as isize)
 }
 
 /// The Window command a key runs: Esc goes back to the Source view, the rest
@@ -615,7 +674,12 @@ mod tests {
 
     #[test]
     fn f10_and_alt_with_an_access_key_reach_the_menu_bar() {
-        let key = |vk: u32, alt: bool| Pressed { vk, ctrl: false, shift: false, alt };
+        let key = |vk: u32, alt: bool| Pressed {
+            vk,
+            ctrl: false,
+            shift: false,
+            alt,
+        };
         assert_eq!(menu_key(key(VK_F10.0 as u32, false)), Some(0));
         assert_eq!(menu_key(key(b'F' as u32, true)), Some('f' as isize));
         assert_eq!(menu_key(key(b'V' as u32, true)), Some('v' as isize));
@@ -631,14 +695,35 @@ mod tests {
     fn keys() -> Vec<ACCEL> {
         let ctrl = FCONTROL | FVIRTKEY;
         vec![
-            ACCEL { fVirt: ctrl, key: 0x09, cmd: NEXT },
-            ACCEL { fVirt: ctrl | FSHIFT, key: 0x09, cmd: PREV },
-            ACCEL { fVirt: ctrl, key: b'E' as u16, cmd: TOGGLE },
+            ACCEL {
+                fVirt: ctrl,
+                key: 0x09,
+                cmd: NEXT,
+            },
+            ACCEL {
+                fVirt: ctrl | FSHIFT,
+                key: 0x09,
+                cmd: PREV,
+            },
+            ACCEL {
+                fVirt: ctrl,
+                key: b'E' as u16,
+                cmd: TOGGLE,
+            },
         ]
     }
 
     fn press(vk: u32, ctrl: bool, shift: bool) -> Option<u16> {
-        command_for(&keys(), ESC, Pressed { vk, ctrl, shift, alt: false })
+        command_for(
+            &keys(),
+            ESC,
+            Pressed {
+                vk,
+                ctrl,
+                shift,
+                alt: false,
+            },
+        )
     }
 
     #[test]
