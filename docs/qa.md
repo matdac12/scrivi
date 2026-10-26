@@ -268,20 +268,26 @@ Needs two monitors with different scaling (for example 100% and 150%).
 
 ## Disk change (SCRIVI-19)
 
-**Pending.** SCRIVI-19 (issue 11, Disk changes) is still being built. The exact hand-check list is added
-when it lands. Spec §8 and §9 acceptance, to be turned into steps:
+Spec §8 and §9. Rewrite files from PowerShell, for example `Set-Content .\a.txt "new text"`.
 
-- [ ] An agent or PowerShell rewriting an open, unedited file reloads it within about a second, keeping the
-  caret line where possible.
-- [ ] With unsaved edits, the Tab shows the dot and the amber Disk change Notice when it is shown.
-  *Reload* discards the edits; *Keep mine* dismisses the Notice and the next Save overwrites the file.
-- [ ] Deleting or renaming the file keeps the text, marks the Tab unsaved and shows the rose "deleted on disk"
-  Notice; *Save* writes the file again at its old path.
-- [ ] Ctrl+S never triggers a Disk change or a "deleted on disk" Notice for its own Tab (saves are atomic:
-  they look like rename, delete and create to a watcher).
-- [ ] Each Tab keeps its own Notice; it shows when its Tab is active.
-- [ ] **Accepted limitation:** a Large file that is being appended to (a live log over 50 MB) reloads after
-  each debounced change.
+- [ ] **Changed with unsaved edits.** Open a file and type something, then rewrite the file from PowerShell.
+  - Expect: within about 1 s the amber Notice "*name* changed on disk while you had unsaved edits." shows,
+    with [Keep mine] and [Reload].
+  - Each button lightens on hover.
+  - Pressing a button and dragging off it does not fire it; pressing and releasing on it does.
+- [ ] **Keep mine and Reload.** Repeat the above for each button.
+  - Expect: Keep mine dismisses the Notice and the next Ctrl+S overwrites the file. Reload discards your
+    edits and shows the file's new text.
+- [ ] **Unedited file.** Rewrite an unedited open file from PowerShell.
+  - Expect: it reloads silently within about 1 s and keeps the caret line.
+- [ ] **Deleted or renamed.** Delete or rename an open file.
+  - Expect: the rose Notice "…was deleted or renamed on disk…" shows with [Save], the text is kept and the
+    unsaved dot appears. Click Save: the file is recreated at its old path.
+- [ ] **Own save.** Ctrl+S on an edited Tab.
+  - Expect: no Notice and no reload.
+- [ ] **Per-Tab Notices.** With a Notice showing on one Tab, switch to another Tab and back.
+  - Expect: each Tab keeps its own Notice.
+- [ ] **Known and accepted:** a live log over 50 MB (a Large file being appended to) reloads after each change.
 
 ## Performance (idle machine)
 
