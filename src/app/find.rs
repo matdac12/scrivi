@@ -108,6 +108,11 @@ fn layout(a: &App, mode: Mode) -> FindLayout {
     FindLayout::new(band, scale_of(a.hwnd), mode)
 }
 
+fn shown_read_only(a: &App) -> bool {
+    let tabs = a.tabs.borrow();
+    tabs.active().and_then(|id| tabs.get(id)).is_some_and(Tab::read_only)
+}
+
 fn invalidate_band(a: &App) {
     let band = a.ui.borrow().layout.find;
     invalidate(a, Some(band));
@@ -285,12 +290,8 @@ pub fn control_notify(a: &App, wp: WPARAM, lp: LPARAM) -> bool {
 /// Ctrl+F, Ctrl+H, Ctrl+G: open the bar in `mode` with the keyboard in its
 /// first input. Find and Replace take the selection as the word to find.
 pub fn open(a: &App, mode: Mode) {
-    let read_only = {
-        let tabs = a.tabs.borrow();
-        tabs.active().and_then(|id| tabs.get(id)).is_some_and(Tab::read_only)
-    };
     // A read-only Tab can be searched, not replaced in.
-    let mode = if mode == Mode::Replace && read_only { Mode::Find } else { mode };
+    let mode = if mode == Mode::Replace && shown_read_only(a) { Mode::Find } else { mode };
     ensure_controls(a);
     a.editor.define_find_indicators();
     let word = (mode != Mode::Goto).then(|| a.editor.selected_word(PREFILL_MAX)).flatten();
@@ -334,6 +335,11 @@ pub fn close(a: &App) {
 /// Tab → Tab: the document changed under the bar.
 pub fn on_show(a: &App) {
     a.editor.clear_find_marks();
+    // The new Tab can't be replaced in: the replace row goes.
+    if open_mode() == Mode::Replace && shown_read_only(a) {
+        st(|f| f.mode = Mode::Find);
+        relayout(a);
+    }
     if matches!(open_mode(), Mode::Find | Mode::Replace) {
         refresh(a);
     }
@@ -382,7 +388,12 @@ fn refresh(a: &App) {
 fn mark_current(a: &App) {
     let sel = a.editor.selection();
     let current = st(|f| f.matches.index_of(&sel));
-    let range = current.and_then(|i| st(|f| f.matches.list.get(i).cloned()));
+    let mut range = current.and_then(|i| st(|f| f.matches.list.get(i).cloned()));
+    // Past the list's cap the match is still the current one, just not counted.
+    if range.is_none() && st(|f| f.matches.capped) {
+        let (needle, case) = (needle(), match_case());
+        range = find::next_match(&a.editor, &needle, case, sel.start).filter(|m| *m == sel);
+    }
     a.editor.set_current_mark(range.as_ref());
     st(|f| f.current = current);
     invalidate_band(a);
@@ -435,6 +446,9 @@ pub fn step(a: &App, forward: bool) {
 }
 
 fn replace_one(a: &App) {
+    if shown_read_only(a) {
+        return;
+    }
     let (needle, with, case) = (needle(), text(Field::Replace), match_case());
     let mut e = a.editor;
     let sel = e.selection();
@@ -453,6 +467,9 @@ fn replace_one(a: &App) {
 }
 
 fn replace_all(a: &App) {
+    if shown_read_only(a) {
+        return;
+    }
     let (needle, with, case) = (needle(), text(Field::Replace), match_case());
     let mut e = a.editor;
     let n = find::replace_all(&mut e, &needle, &with, case);

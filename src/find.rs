@@ -96,7 +96,8 @@ pub fn replace_selected(
 }
 
 /// Replace every match as one undo step; how many there were. The
-/// replacement is not searched again.
+/// replacement is not searched again. Stops at the first edit the document
+/// refuses.
 pub fn replace_all(t: &mut impl Text, needle: &str, with: &str, match_case: bool) -> usize {
     if needle.is_empty() {
         return 0;
@@ -104,7 +105,12 @@ pub fn replace_all(t: &mut impl Text, needle: &str, with: &str, match_case: bool
     t.begin_edit();
     let (mut at, mut count) = (0, 0);
     while let Some(m) = t.find(needle, at, t.len(), match_case) {
+        let expected = t.len() - m.len() + with.len();
         t.replace(m.clone(), with);
+        // A document that refuses the edit (read-only) would be found again forever.
+        if t.len() != expected {
+            break;
+        }
         at = m.start + with.len();
         count += 1;
     }

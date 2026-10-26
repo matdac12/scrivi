@@ -151,6 +151,28 @@ fn replace_all_is_one_undo_step() {
     assert_eq!(d.steps, 1);
 }
 
+/// A document that ignores edits, like a read-only one.
+struct Frozen(Doc);
+
+impl Text for Frozen {
+    fn find(&self, needle: &str, from: usize, to: usize, match_case: bool) -> Option<Range<usize>> {
+        self.0.find(needle, from, to, match_case)
+    }
+
+    fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    fn replace(&mut self, _: Range<usize>, _: &str) {}
+}
+
+#[test]
+fn replace_all_in_a_document_that_refuses_edits_ends_with_nothing_replaced() {
+    let mut d = Frozen(doc("foo foo"));
+    assert_eq!(replace_all(&mut d, "foo", "", true), 0);
+    assert_eq!(d.0.text, "foo foo");
+}
+
 #[test]
 fn replace_all_does_not_search_its_own_output() {
     let mut d = doc("aa");
