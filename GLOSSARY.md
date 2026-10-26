@@ -36,6 +36,10 @@ _Avoid_: preview, reading mode
 A text file over 50 MB, which opens read-only without wrap or styling.
 _Avoid_: huge file, big file
 
+**Notice**:
+A bar under the tabs that reports a Disk change, a file deleted on disk, or a Large file, with the actions it offers.
+_Avoid_: banner, toast, infobar
+
 **Disk change**:
 The file on disk changing under an open window, typically because an agent edited it.
 _Avoid_: external edit, conflict
