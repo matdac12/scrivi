@@ -16,7 +16,7 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 };
 use windows::Win32::UI::WindowsAndMessaging::*;
 
-use super::{app, cmd, command, files, invalidate, wide, App};
+use super::{app, cmd, command, files, invalidate, rehover, wide, App};
 use crate::chrome::Hit;
 use crate::editor::sci;
 use crate::tabs::{Action, TabId, Tabs};
@@ -136,7 +136,8 @@ pub fn items(entries: &[Entry], state: &State) -> Vec<Item> {
 fn encodings(s: &State) -> Vec<Item> {
     let mut items = Vec::new();
     if !Encoding::MENU.contains(&s.encoding) {
-        items.push(Item::Command { label: s.encoding.name().into(), id: cmd::ENCODING_KEEP, enabled: true, checked: true });
+        let label = s.encoding.name().into();
+        items.push(Item::Command { label, id: cmd::ENCODING_KEEP, enabled: true, checked: true });
         items.push(Item::Separator);
     }
     for (i, (e, label)) in Encoding::MENU.iter().zip(ENCODING_LABELS).enumerate() {
@@ -267,6 +268,9 @@ struct Tracking {
     next: Option<(usize, bool)>,
     /// Esc closed the popup itself, not a submenu: back to the highlighted bar.
     escaped: bool,
+    /// Where the mouse last was: only a move away from it switches menus,
+    /// not the move Windows reports when a popup opens under a resting mouse.
+    mouse: POINT,
 }
 
 thread_local! {
@@ -306,7 +310,8 @@ pub fn painted() -> (Option<usize>, bool) {
 fn keyboard_cues() -> bool {
     let mut on = BOOL(0);
     let got = unsafe {
-        SystemParametersInfoW(SPI_GETKEYBOARDCUES, 0, Some(&mut on as *mut BOOL as *mut _), SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0))
+        let flags = SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0);
+        SystemParametersInfoW(SPI_GETKEYBOARDCUES, 0, Some(&mut on as *mut BOOL as *mut _), flags)
     };
     got.is_ok() && on.as_bool()
 }
@@ -374,6 +379,15 @@ pub fn pre_translate(msg: &MSG) -> bool {
             }
             eat || matches!(mode(), Mode::Focused(_))
         }
+        // Alt+F, E or V. Scintilla never hands WM_SYSCHAR to DefWindowProc,
+        // so no SC_KEYMENU would follow.
+        WM_SYSCHAR if mode() == Mode::Idle => match char::from_u32(vk as u32).and_then(access_key) {
+            Some(at) => {
+                open(a, at, true);
+                true
+            }
+            None => false,
+        },
         WM_CHAR | WM_SYSCHAR | WM_DEADCHAR | WM_SYSDEADCHAR => matches!(mode(), Mode::Focused(_)),
         _ => false,
     }
@@ -421,6 +435,8 @@ pub fn open(a: &App, at: usize, keyboard: bool) {
             s.mode = if escaped && chosen == 0 { Mode::Focused(at) } else { Mode::Idle };
             s.alt_held = false;
         });
+        // The mouse may have moved off the button while the popup held it.
+        rehover(a);
         if chosen != 0 {
             unsafe {
                 SendMessageW(a.hwnd, WM_COMMAND, Some(WPARAM(chosen as usize)), Some(LPARAM(0)));
@@ -452,6 +468,7 @@ fn track(a: &App, at: usize, keyboard: bool) -> (u16, Option<Tracking>) {
             popup: Popup { in_submenu: false, on_submenu_item: false },
             next: None,
             escaped: false,
+            mouse: cursor(),
         })
     });
     let chosen = unsafe {
@@ -493,10 +510,15 @@ unsafe extern "system" fn filter(code: i32, wp: WPARAM, lp: LPARAM) -> LRESULT {
     unsafe {
         if code == MSGF_MENU as i32 {
             let msg = &*(lp.0 as *const MSG);
-            if let Some(to) = switch_to(msg) {
+            // Releasing Alt after Alt+F would end the menu loop; a native
+            // menu bar's popup stays open.
+            if matches!(msg.message, WM_KEYUP | WM_SYSKEYUP) && VIRTUAL_KEY(msg.wParam.0 as u16) == VK_MENU {
+                return LRESULT(1);
+            }
+            if let Some(end) = ends_popup(msg) {
                 TRACKING.with(|t| {
                     if let Some(t) = t.borrow_mut().as_mut() {
-                        t.next = Some(to);
+                        t.next = end;
                     }
                 });
                 let _ = EndMenu();
@@ -507,33 +529,56 @@ unsafe extern "system" fn filter(code: i32, wp: WPARAM, lp: LPARAM) -> LRESULT {
     }
 }
 
-fn switch_to(msg: &MSG) -> Option<(usize, bool)> {
+/// A message that ends the open popup: `Some(Some(menu))` moves to that menu
+/// (`true`: by keyboard), `Some(None)` just closes it.
+fn ends_popup(msg: &MSG) -> Option<Option<(usize, bool)>> {
     let (at, popup) = TRACKING.with(|t| t.borrow().as_ref().map(|t| (t.at, t.popup)))?;
     match msg.message {
         WM_KEYDOWN => {
             let key = key_of(msg.wParam.0 as u16);
-            if key == Key::Esc && !popup.in_submenu {
+            // Esc on a hovered "Encoding ›" closes only its submenu.
+            if key == Key::Esc && !popup.in_submenu && !popup.on_submenu_item {
                 TRACKING.with(|t| {
                     if let Some(t) = t.borrow_mut().as_mut() {
                         t.escaped = true;
                     }
                 });
             }
-            in_popup(at, key, popup).map(|to| (to, true))
+            in_popup(at, key, popup).map(|to| Some((to, true)))
         }
         WM_MOUSEMOVE => {
-            let a = app()?;
-            let mut pt = msg.pt;
-            unsafe {
-                let _ = ScreenToClient(a.hwnd, &mut pt);
-            }
-            match a.ui.try_borrow().ok()?.layout.hit_test(pt.x, pt.y) {
-                Hit::Menu(to) if to != at => Some((to, false)),
+            let moved = TRACKING.with(|t| {
+                t.borrow_mut().as_mut().is_some_and(|t| std::mem::replace(&mut t.mouse, msg.pt) != msg.pt)
+            });
+            match button_at(msg.pt) {
+                Some(to) if moved && to != at => Some(Some((to, false))),
                 _ => None,
             }
         }
+        // A click on the open menu's own button closes it, and goes no further.
+        WM_LBUTTONDOWN if button_at(msg.pt) == Some(at) => Some(None),
         _ => None,
     }
+}
+
+/// The menu button under the screen point `pt`, if any.
+fn button_at(mut pt: POINT) -> Option<usize> {
+    let a = app()?;
+    unsafe {
+        let _ = ScreenToClient(a.hwnd, &mut pt);
+    }
+    match a.ui.try_borrow().ok()?.layout.hit_test(pt.x, pt.y) {
+        Hit::Menu(i) => Some(i),
+        _ => None,
+    }
+}
+
+fn cursor() -> POINT {
+    let mut pt = POINT::default();
+    unsafe {
+        let _ = GetCursorPos(&mut pt);
+    }
+    pt
 }
 
 /// The popup for `items`, or `None` if Windows refused one.
@@ -569,7 +614,11 @@ fn build(items: &[Item]) -> Option<HMENU> {
                         cch: label.len() as u32 - 1,
                         ..Default::default()
                     };
-                    InsertMenuItemW(menu, u32::MAX, true, &info)
+                    let added = InsertMenuItemW(menu, u32::MAX, true, &info);
+                    if added.is_err() {
+                        let _ = DestroyMenu(sub);
+                    }
+                    added
                 }
             };
             if added.is_err() {
@@ -610,7 +659,7 @@ fn state_of(a: &App) -> State {
 }
 
 fn editor_call(a: &App, msg: u32) -> isize {
-    unsafe { SendMessageW(a.editor.hwnd(), msg, Some(WPARAM(0)), Some(LPARAM(0))).0 }
+    files::send(&a.editor, msg)
 }
 
 /// A menu command (or its shortcut) as `WM_COMMAND`. Returns false for an id
@@ -629,12 +678,17 @@ pub fn run(a: &App, id: u16) -> bool {
         cmd::EXIT => unsafe {
             let _ = PostMessageW(Some(a.hwnd), WM_CLOSE, WPARAM(0), LPARAM(0));
         },
-        cmd::UNDO => drop(editor_call(a, sci::SCI_UNDO)),
-        cmd::REDO => drop(editor_call(a, sci::SCI_REDO)),
-        cmd::CUT => drop(editor_call(a, sci::SCI_CUT)),
-        cmd::COPY => drop(editor_call(a, sci::SCI_COPY)),
-        cmd::PASTE => drop(editor_call(a, sci::SCI_PASTE)),
-        cmd::SELECT_ALL => drop(editor_call(a, sci::SCI_SELECTALL)),
+        cmd::UNDO | cmd::REDO | cmd::CUT | cmd::COPY | cmd::PASTE | cmd::SELECT_ALL => {
+            let msg = match id {
+                cmd::UNDO => sci::SCI_UNDO,
+                cmd::REDO => sci::SCI_REDO,
+                cmd::CUT => sci::SCI_CUT,
+                cmd::COPY => sci::SCI_COPY,
+                cmd::PASTE => sci::SCI_PASTE,
+                _ => sci::SCI_SELECTALL,
+            };
+            editor_call(a, msg);
+        }
         _ if (cmd::ENCODING..cmd::ENCODING + Encoding::MENU.len() as u16).contains(&id) => {
             let encoding = Encoding::MENU[(id - cmd::ENCODING) as usize];
             on_active(&|t, tab| t.set_encoding(tab, encoding));
@@ -654,323 +708,4 @@ pub fn run(a: &App, id: u16) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::app::cmd;
-
-    fn state() -> State {
-        State {
-            encoding: Encoding::Utf8,
-            eol: Eol::Lf,
-            read_only: false,
-            untitled: false,
-            can_undo: true,
-            can_redo: true,
-            selection: true,
-            can_paste: true,
-        }
-    }
-
-    /// Labels without access-key ampersands, separators as "-".
-    fn labels(items: &[Item]) -> Vec<String> {
-        items
-            .iter()
-            .map(|i| match i {
-                Item::Separator => "-".to_string(),
-                Item::Command { label, .. } | Item::Sub { label, .. } => label.replace('&', ""),
-            })
-            .collect()
-    }
-
-    fn sub(items: &[Item], name: &str) -> (bool, Vec<Item>) {
-        items
-            .iter()
-            .find_map(|i| match i {
-                Item::Sub { label, enabled, items } if label.replace('&', "") == name => Some((*enabled, items.clone())),
-                _ => None,
-            })
-            .unwrap_or_else(|| panic!("no {name} submenu"))
-    }
-
-    fn command(items: &[Item], id: u16) -> &Item {
-        items.iter().find(|i| matches!(i, Item::Command { id: c, .. } if *c == id)).expect("no such command")
-    }
-
-    fn enabled(items: &[Item], id: u16) -> bool {
-        matches!(command(items, id), Item::Command { enabled: true, .. })
-    }
-
-    fn checked(items: &[Item]) -> Vec<String> {
-        items
-            .iter()
-            .filter_map(|i| match i {
-                Item::Command { label, checked: true, .. } => Some(label.replace('&', "")),
-                _ => None,
-            })
-            .collect()
-    }
-
-    #[test]
-    fn the_file_menu_reads_as_the_spec_lists_it() {
-        assert_eq!(
-            labels(&items(FILE, &state())),
-            [
-                "New tab\tCtrl+T",
-                "Open…\tCtrl+O",
-                "Recent files",
-                "-",
-                "Save\tCtrl+S",
-                "Save as…\tCtrl+Shift+S",
-                "-",
-                "Encoding",
-                "Line endings",
-                "-",
-                "Close tab\tCtrl+W",
-                "Exit",
-            ]
-        );
-    }
-
-    #[test]
-    fn recent_files_is_an_empty_disabled_submenu_for_now() {
-        let (enabled, items) = sub(&items(FILE, &state()), "Recent files");
-        assert!(!enabled);
-        assert!(items.is_empty());
-    }
-
-    #[test]
-    fn the_encoding_submenu_checks_the_tabs_encoding_and_ends_with_reopen() {
-        let s = State { encoding: Encoding::Utf16Le, ..state() };
-        let (enabled, items) = sub(&items(FILE, &s), "Encoding");
-        assert!(enabled);
-        assert_eq!(
-            labels(&items),
-            ["UTF-8", "UTF-8 with BOM", "UTF-16 LE", "UTF-16 BE", "Windows-1252 (ANSI)", "-", "Reopen with encoding…"]
-        );
-        assert_eq!(checked(&items), ["UTF-16 LE"]);
-        assert!(enabled_all(&items));
-    }
-
-    fn enabled_all(items: &[Item]) -> bool {
-        items.iter().all(|i| !matches!(i, Item::Command { enabled: false, .. }))
-    }
-
-    #[test]
-    fn an_encoding_outside_the_menu_shows_checked_at_the_top() {
-        let s = State { encoding: Encoding::Other(encoding_rs::SHIFT_JIS), ..state() };
-        let (_, items) = sub(&items(FILE, &s), "Encoding");
-        assert_eq!(labels(&items)[..2], ["Shift_JIS".to_string(), "-".to_string()]);
-        assert_eq!(checked(&items), ["Shift_JIS"]);
-    }
-
-    #[test]
-    fn a_read_only_tab_can_only_reopen_with_another_encoding() {
-        let s = State { read_only: true, ..state() };
-        let file = items(FILE, &s);
-        let (_, encodings) = sub(&file, "Encoding");
-        for (i, _) in Encoding::MENU.iter().enumerate() {
-            assert!(!enabled(&encodings, cmd::ENCODING + i as u16));
-        }
-        assert!(enabled(&encodings, cmd::REOPEN));
-        let (_, eols) = sub(&file, "Line endings");
-        assert!(!enabled_all(&eols));
-    }
-
-    #[test]
-    fn an_untitled_tab_has_no_file_to_reopen() {
-        let s = State { untitled: true, ..state() };
-        let (_, items) = sub(&items(FILE, &s), "Encoding");
-        assert!(!enabled(&items, cmd::REOPEN));
-    }
-
-    #[test]
-    fn the_line_endings_submenu_checks_the_tabs_line_ending() {
-        let s = State { eol: Eol::Crlf, ..state() };
-        let (_, items) = sub(&items(FILE, &s), "Line endings");
-        assert_eq!(labels(&items), ["LF", "CRLF", "CR"]);
-        assert_eq!(checked(&items), ["CRLF"]);
-    }
-
-    #[test]
-    fn the_edit_menu_has_the_clipboard_and_undo_commands() {
-        let edit = items(EDIT, &state());
-        assert_eq!(
-            labels(&edit)[..7],
-            [
-                "Undo\tCtrl+Z",
-                "Redo\tCtrl+Y",
-                "-",
-                "Cut\tCtrl+X",
-                "Copy\tCtrl+C",
-                "Paste\tCtrl+V",
-                "Select all\tCtrl+A",
-            ]
-        );
-        for id in [cmd::UNDO, cmd::REDO, cmd::CUT, cmd::COPY, cmd::PASTE, cmd::SELECT_ALL] {
-            assert!(enabled(&edit, id));
-        }
-    }
-
-    #[test]
-    fn edit_commands_follow_the_editor() {
-        let s = State { can_undo: false, can_redo: false, selection: false, can_paste: false, ..state() };
-        let edit = items(EDIT, &s);
-        for id in [cmd::UNDO, cmd::REDO, cmd::CUT, cmd::COPY, cmd::PASTE] {
-            assert!(!enabled(&edit, id), "{id}");
-        }
-        assert!(enabled(&edit, cmd::SELECT_ALL));
-        // Read-only text can be copied, not cut or pasted into.
-        let edit = items(EDIT, &State { read_only: true, ..state() });
-        assert!(enabled(&edit, cmd::COPY));
-        assert!(!enabled(&edit, cmd::CUT));
-        assert!(!enabled(&edit, cmd::PASTE));
-    }
-
-    #[test]
-    fn find_and_the_view_menu_wait_for_their_tickets_greyed() {
-        let edit = items(EDIT, &state());
-        assert_eq!(labels(&edit)[7..], ["-", "Find…\tCtrl+F", "Replace…\tCtrl+H", "Go to line…\tCtrl+G"]);
-        for id in [cmd::FIND, cmd::REPLACE, cmd::GO_TO_LINE] {
-            assert!(!enabled(&edit, id));
-        }
-        let view = items(VIEW, &state());
-        assert_eq!(
-            labels(&view),
-            [
-                "Rendered view\tCtrl+E",
-                "Word wrap\tAlt+Z",
-                "-",
-                "Zoom in\tCtrl++",
-                "Zoom out\tCtrl+\u{2212}",
-                "Reset zoom\tCtrl+0"
-            ]
-        );
-        assert!(!enabled_all(&view));
-    }
-
-    /// Every command id, submenus included.
-    fn ids(items: &[Item], out: &mut Vec<u16>) {
-        for i in items {
-            match i {
-                Item::Command { id, .. } => out.push(*id),
-                Item::Sub { items, .. } => ids(items, out),
-                Item::Separator => {}
-            }
-        }
-    }
-
-    #[test]
-    fn command_ids_are_distinct_and_clear_of_the_tab_shortcuts() {
-        let mut all = Vec::new();
-        let s = State { encoding: Encoding::Other(encoding_rs::SHIFT_JIS), ..state() };
-        for menu in MENUS {
-            ids(&items(menu, &s), &mut all);
-        }
-        for tab in [cmd::NEW_TAB, cmd::CLOSE_TAB] {
-            all.retain(|id| *id != tab);
-        }
-        let mut sorted = all.clone();
-        sorted.sort();
-        sorted.dedup();
-        assert_eq!(sorted.len(), all.len(), "{all:?}");
-        assert!(!all.contains(&cmd::NEXT_TAB) && !all.contains(&cmd::PREV_TAB));
-    }
-
-    fn access_keys(items: &[Item]) -> Vec<char> {
-        items
-            .iter()
-            .filter_map(|i| match i {
-                Item::Command { label, .. } | Item::Sub { label, .. } => {
-                    let at = label.find('&')?;
-                    label[at + 1..].chars().next().map(|c| c.to_ascii_lowercase())
-                }
-                Item::Separator => None,
-            })
-            .collect()
-    }
-
-    #[test]
-    fn every_item_has_an_access_key_unique_in_its_popup() {
-        let s = state();
-        let file = items(FILE, &s);
-        let mut popups = vec![file.clone(), items(EDIT, &s), items(VIEW, &s)];
-        popups.push(sub(&file, "Encoding").1);
-        popups.push(sub(&file, "Line endings").1);
-        for popup in popups {
-            let keys = access_keys(&popup);
-            let named = popup.iter().filter(|i| !matches!(i, Item::Separator)).count();
-            assert_eq!(keys.len(), named, "{:?}", labels(&popup));
-            let mut unique = keys.clone();
-            unique.sort();
-            unique.dedup();
-            assert_eq!(unique.len(), keys.len(), "{:?}", labels(&popup));
-        }
-    }
-
-    // --- The menu bar from the keyboard ------------------------------------
-
-    #[test]
-    fn alt_f_e_and_v_name_the_three_menus() {
-        assert_eq!(access_key('f'), Some(0));
-        assert_eq!(access_key('E'), Some(1));
-        assert_eq!(access_key('v'), Some(2));
-        assert_eq!(access_key('x'), None);
-        assert_eq!(access_key(' '), None);
-    }
-
-    #[test]
-    fn arrows_move_across_the_bar_and_wrap() {
-        assert_eq!(on_bar(0, Key::Right), Bar::Focus(1));
-        assert_eq!(on_bar(2, Key::Right), Bar::Focus(0));
-        assert_eq!(on_bar(0, Key::Left), Bar::Focus(2));
-        assert_eq!(on_bar(1, Key::Left), Bar::Focus(0));
-    }
-
-    #[test]
-    fn enter_and_up_or_down_open_the_highlighted_menu() {
-        for key in [Key::Enter, Key::Down, Key::Up] {
-            assert_eq!(on_bar(1, key), Bar::Open(1));
-        }
-    }
-
-    #[test]
-    fn a_menus_letter_opens_it() {
-        assert_eq!(on_bar(0, Key::Letter('v')), Bar::Open(2));
-        assert_eq!(on_bar(2, Key::Letter('F')), Bar::Open(0));
-    }
-
-    #[test]
-    fn esc_alt_and_f10_leave_the_bar() {
-        for key in [Key::Esc, Key::Alt, Key::F10] {
-            assert_eq!(on_bar(1, key), Bar::Leave);
-        }
-    }
-
-    #[test]
-    fn other_keys_keep_the_bar_highlighted() {
-        assert_eq!(on_bar(1, Key::Letter('q')), Bar::Focus(1));
-        assert_eq!(on_bar(1, Key::Other), Bar::Focus(1));
-    }
-
-    #[test]
-    fn in_an_open_menu_left_and_right_move_to_the_next_menu() {
-        let top = Popup { in_submenu: false, on_submenu_item: false };
-        assert_eq!(in_popup(0, Key::Right, top), Some(1));
-        assert_eq!(in_popup(0, Key::Left, top), Some(2));
-        assert_eq!(in_popup(1, Key::Down, top), None);
-    }
-
-    #[test]
-    fn right_on_a_submenu_item_opens_the_submenu_instead() {
-        let on_sub = Popup { in_submenu: false, on_submenu_item: true };
-        assert_eq!(in_popup(0, Key::Right, on_sub), None);
-        assert_eq!(in_popup(0, Key::Left, on_sub), Some(2));
-    }
-
-    #[test]
-    fn left_in_a_submenu_closes_it_and_right_moves_on() {
-        let inside = Popup { in_submenu: true, on_submenu_item: false };
-        assert_eq!(in_popup(0, Key::Left, inside), None);
-        assert_eq!(in_popup(0, Key::Right, inside), Some(1));
-    }
-}
+mod tests;

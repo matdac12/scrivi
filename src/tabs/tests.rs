@@ -1247,6 +1247,32 @@ fn a_refused_lossy_save_calls_off_the_close_waiting_on_it() {
 }
 
 #[test]
+fn a_saved_copy_of_a_lossy_tab_is_editable_it_holds_what_the_tab_shows() {
+    let mut tabs = Tabs::new();
+    let id = open_lossy(&mut tabs, r"C:\odd.txt");
+    tabs.save_as_chosen(id, path(r"C:\copy.txt"));
+    tabs.saved(id, path(r"C:\copy.txt"), stat(10, 300), t0());
+    let tab = tabs.get(id).unwrap();
+    assert!(!tab.read_only());
+    assert_eq!(tab.status_note(), None);
+}
+
+#[test]
+fn save_as_utf8_instead_switches_the_encoding_even_of_a_read_only_tab() {
+    let mut tabs = Tabs::new();
+    let id = added(&tabs.open(&[path(r"C:\odd.txt")]));
+    tabs.loaded(
+        id,
+        LoadedFile { encoding: Encoding::Other(encoding_rs::SHIFT_JIS), lossy: true, ..file(10) },
+    );
+    assert_eq!(tabs.use_utf8_instead(id), [Action::Changed(id)]);
+    let tab = tabs.get(id).unwrap();
+    assert_eq!(tab.encoding(), Encoding::Utf8);
+    assert!(tab.unsaved());
+    assert_eq!(tabs.use_utf8_instead(id), []);
+}
+
+#[test]
 fn reopening_a_lossy_tab_in_an_encoding_that_fits_makes_it_editable() {
     let mut tabs = Tabs::new();
     let id = open_lossy(&mut tabs, r"C:\odd.txt");
@@ -1632,6 +1658,7 @@ fn status_notes_read_as_the_spec_words_them() {
     assert_eq!(StatusNote::StylingOff.text(), "Markdown styling off (over 1 MB)");
     assert_eq!(StatusNote::RenderedView.text(), "Rendered view \u{b7} Esc to edit");
     assert_eq!(StatusNote::TooLargeToRender.text(), "Too large to render");
+    assert_eq!(StatusNote::SavedInPlace.text(), "Saved in place: the safe replace failed");
     assert_eq!(
         StatusNote::InvalidBytes.text(),
         "Read-only: some bytes don\u{2019}t fit this encoding \u{b7} Encoding \u{203a} Reopen with encoding\u{2026}"

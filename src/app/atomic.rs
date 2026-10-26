@@ -5,8 +5,10 @@
 //! - An existing file is swapped with `ReplaceFileW`, which keeps its
 //!   attributes, ACL and creation time.
 //! - A new file is moved into place with `MoveFileExW`.
-//! - If that fails (a read-only file, some network shares), the bytes are
-//!   written over the file in place instead; the error says when both failed.
+//! - If the swap fails (a read-only file, some network shares), the bytes
+//!   are written over the file in place instead; the error says when both
+//!   failed. A temp file that can't be written (a full disk) stops the save
+//!   with the file untouched.
 //!
 //! A folder watcher sees a replace as rename, delete and create events, not a
 //! single change: `tabs`' own-save marker covers them (spec §8, 11).
@@ -56,22 +58,32 @@ impl fmt::Display for WriteError {
 
 /// Write `bytes` to `path` (spec §7 and the SCRIVI-16 notes).
 pub fn write(path: &Path, bytes: &[u8]) -> Result<Written, WriteError> {
+    write_with(path, bytes, write_temp)
+}
+
+/// `write`, with the temp-file step given (tests stand in a full disk).
+fn write_with(
+    path: &Path,
+    bytes: &[u8],
+    temp: impl FnOnce(&Path, &[u8]) -> io::Result<PathBuf>,
+) -> Result<Written, WriteError> {
+    // No temp file (a full disk): writing over the file could only leave it
+    // half written, so stop with it untouched.
+    let temp = temp(path, bytes).map_err(|write| WriteError { replace: None, write })?;
     let existed = std::fs::metadata(path).is_ok();
-    let safe = write_temp(path, bytes).and_then(|temp| {
-        let swapped = if existed { replace(path, &temp) } else { move_into(path, &temp) };
-        if swapped.is_err() {
-            let _ = std::fs::remove_file(&temp);
-        }
-        swapped
-    });
-    match safe {
-        Ok(written) => Ok(written),
+    let swapped = if existed { replace(path, &temp) } else { move_into(path, &temp) };
+    let replace = match swapped {
+        Ok(written) => return Ok(written),
+        Err(e) => e,
+    };
+    let _ = std::fs::remove_file(&temp);
+    if !existed {
         // A new file has nothing to write over.
-        Err(write) if !existed => Err(WriteError { replace: None, write }),
-        Err(replace) => match write_in_place(path, bytes) {
-            Ok(()) => Ok(Written::InPlace),
-            Err(write) => Err(WriteError { replace: Some(replace), write }),
-        },
+        return Err(WriteError { replace: None, write: replace });
+    }
+    match write_in_place(path, bytes) {
+        Ok(()) => Ok(Written::InPlace),
+        Err(write) => Err(WriteError { replace: Some(replace), write }),
     }
 }
 
@@ -105,7 +117,8 @@ fn write_temp(path: &Path, bytes: &[u8]) -> io::Result<PathBuf> {
 /// Swap `temp` in for the existing `path`.
 fn replace(path: &Path, temp: &Path) -> io::Result<Written> {
     let flags = REPLACEFILE_IGNORE_MERGE_ERRORS | REPLACEFILE_IGNORE_ACL_ERRORS;
-    let replaced = unsafe { ReplaceFileW(&HSTRING::from(path), &HSTRING::from(temp), PCWSTR::null(), flags, None, None) };
+    let (path_w, temp_w) = (HSTRING::from(path), HSTRING::from(temp));
+    let replaced = unsafe { ReplaceFileW(&path_w, &temp_w, PCWSTR::null(), flags, None, None) };
     match replaced {
         Ok(()) => Ok(Written::Replaced),
         // ERROR_UNABLE_TO_MOVE_REPLACEMENT without a backup leaves the file
@@ -219,6 +232,20 @@ mod tests {
         #[allow(clippy::permissions_set_readonly_false)]
         perms.set_readonly(false);
         std::fs::set_permissions(&path, perms).unwrap();
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_temp_file_that_cannot_be_written_never_touches_the_file() {
+        // Stands in for a full disk: the temp write fails, so the swap and
+        // the write in place are never tried.
+        let dir = folder("notemp");
+        let path = dir.join("keep.txt");
+        std::fs::write(&path, b"precious").unwrap();
+        let err = write_with(&path, b"new", |_, _| Err(io::Error::other("disk full"))).unwrap_err();
+        assert!(err.replace.is_none());
+        assert_eq!(err.to_string(), "disk full");
+        assert_eq!(std::fs::read(&path).unwrap(), b"precious");
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

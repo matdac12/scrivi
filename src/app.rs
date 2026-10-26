@@ -235,9 +235,10 @@ pub fn run(initial: Request) -> i32 {
         };
         // An elevated launch hands over from a higher integrity level.
         let _ = ChangeWindowMessageFilterEx(hwnd, WM_COPYDATA, MSGFLT_ALLOW, None);
-        // Files dropped from Explorer open in Tabs; 0x49 is WM_COPYGLOBALDATA.
+        // Files dropped from Explorer open in Tabs, elevated or not.
+        const WM_COPYGLOBALDATA: u32 = 0x49;
         windows::Win32::UI::Shell::DragAcceptFiles(hwnd, true);
-        for msg in [WM_DROPFILES, 0x49] {
+        for msg in [WM_DROPFILES, WM_COPYGLOBALDATA] {
             let _ = ChangeWindowMessageFilterEx(hwnd, msg, MSGFLT_ALLOW, None);
         }
         place(hwnd);
@@ -644,8 +645,8 @@ fn load(a: &App, id: TabId, path: &Path, encoding: Option<Encoding>, keep_caret_
         a.shown.set(None);
         show(a, id);
     }
-    let file =
-        LoadedFile { encoding: decoded.encoding, eol: decoded.eol, stat, text_len: decoded.text.len(), lossy: decoded.lossy };
+    let (encoding, eol, lossy) = (decoded.encoding, decoded.eol, decoded.lossy);
+    let file = LoadedFile { encoding, eol, stat, text_len: decoded.text.len(), lossy };
     command(a, |t| t.loaded(id, file));
 }
 
@@ -1190,8 +1191,11 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                     cmd::CLOSE_TAB => command(a, |t| t.active().map_or_else(Vec::new, |id| t.close(id))),
                     cmd::NEXT_TAB => command(a, Tabs::next),
                     cmd::PREV_TAB => command(a, Tabs::prev),
-                    id if menu::run(a, id) => {}
-                    _ => return DefWindowProcW(hwnd, msg, wp, lp),
+                    id => {
+                        if !menu::run(a, id) {
+                            return DefWindowProcW(hwnd, msg, wp, lp);
+                        }
+                    }
                 }
                 LRESULT(0)
             }

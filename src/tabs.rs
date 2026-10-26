@@ -99,6 +99,9 @@ pub enum StatusNote {
     /// The file has bytes its encoding cannot hold: the Tab is read-only
     /// until Reopen with encoding finds one that fits.
     InvalidBytes,
+    /// The safe save (temp file, then replace) failed, but writing over the
+    /// file in place worked.
+    SavedInPlace,
 }
 
 impl StatusNote {
@@ -109,9 +112,11 @@ impl StatusNote {
             StatusNote::StylingOff => "Markdown styling off (over 1 MB)",
             StatusNote::RenderedView => "Rendered view \u{b7} Esc to edit",
             StatusNote::TooLargeToRender => "Too large to render",
-            StatusNote::InvalidBytes => {
-                "Read-only: some bytes don\u{2019}t fit this encoding \u{b7} Encoding \u{203a} Reopen with encoding\u{2026}"
-            }
+            StatusNote::SavedInPlace => "Saved in place: the safe replace failed",
+            StatusNote::InvalidBytes => concat!(
+                "Read-only: some bytes don\u{2019}t fit this encoding ",
+                "\u{b7} Encoding \u{203a} Reopen with encoding\u{2026}"
+            ),
         }
     }
 }
@@ -827,6 +832,8 @@ impl Tabs {
         tab.loaded = true;
         tab.edited = false;
         tab.chosen = false;
+        // The file now holds what the Tab shows.
+        tab.lossy = false;
         tab.missing = false;
         tab.missing_since = None;
         tab.loaded_stat = Some(stat);
@@ -970,6 +977,20 @@ impl Tabs {
         tab.encoding = encoding;
         tab.chosen = true;
         vec![Action::Changed(id)]
+    }
+
+    /// "Save as UTF-8 instead", after the Tab's encoding could not hold its
+    /// text: the save that follows writes UTF-8. Unlike Encoding › this works
+    /// on a read-only Tab too, since it is part of a save already asked for.
+    pub fn use_utf8_instead(&mut self, id: TabId) -> Vec<Action> {
+        match self.tab_mut(id) {
+            Some(tab) if tab.encoding != Encoding::Utf8 => {
+                tab.encoding = Encoding::Utf8;
+                tab.chosen = true;
+                vec![Action::Changed(id)]
+            }
+            _ => Vec::new(),
+        }
     }
 
     /// Reopen with encoding…: rereads the file as `encoding`, asking first

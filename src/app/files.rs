@@ -8,6 +8,7 @@ use std::cell::Cell;
 use std::path::{Path, PathBuf};
 use std::time::{Instant, SystemTime};
 
+use encoding_rs::{UTF_16BE, UTF_16LE, UTF_8, WINDOWS_1252};
 use windows::core::{w, HSTRING, PCWSTR, PWSTR};
 use windows::Win32::Foundation::{LPARAM, WPARAM};
 use windows::Win32::Globalization::GetACP;
@@ -30,10 +31,11 @@ use windows::Win32::UI::WindowsAndMessaging::SendMessageW;
 
 use super::{atomic, command, headless, in_document, message, wide, App};
 use crate::editor::{sci, Editor};
-use crate::tabs::{FileStat, SaveAsDefault, SaveAsFolder, Tab, TabId};
+use crate::tabs::{Action, FileStat, SaveAsDefault, SaveAsFolder, StatusNote, Tab, TabId};
 use crate::textfile::{self, Encoding, Eol};
 
-fn send(e: &Editor, msg: u32) -> isize {
+/// A Scintilla message with no arguments.
+pub(super) fn send(e: &Editor, msg: u32) -> isize {
     unsafe { SendMessageW(e.hwnd(), msg, Some(WPARAM(0)), Some(LPARAM(0))).0 }
 }
 
@@ -88,8 +90,8 @@ fn pick_files(a: &App) -> Option<Vec<PathBuf>> {
         dialog.SetOptions(options | FOS_ALLOWMULTISELECT | FOS_FILEMUSTEXIST | FOS_FORCEFILESYSTEM).ok()?;
         let types = [
             COMDLG_FILTERSPEC { pszName: w!("All files (*.*)"), pszSpec: w!("*.*") },
-            COMDLG_FILTERSPEC { pszName: w!("Markdown files (*.md)"), pszSpec: w!("*.md;*.markdown") },
-            COMDLG_FILTERSPEC { pszName: w!("Text files (*.txt)"), pszSpec: w!("*.txt") },
+            COMDLG_FILTERSPEC { pszName: w!("Markdown (*.md)"), pszSpec: w!("*.md;*.markdown") },
+            COMDLG_FILTERSPEC { pszName: w!("Text (*.txt)"), pszSpec: w!("*.txt") },
         ];
         dialog.SetFileTypes(&types).ok()?;
         if let Some(item) = folder.as_deref().and_then(shell_item) {
@@ -113,8 +115,8 @@ pub fn ask_save_as(a: &App, id: TabId, default: &SaveAsDefault) {
 
 /// The filter list of the Save As dialog, and which one an extension picks.
 const SAVE_TYPES: [(PCWSTR, PCWSTR); 3] = [
-    (w!("Markdown file (*.md)"), w!("*.md;*.markdown")),
-    (w!("Text file (*.txt)"), w!("*.txt")),
+    (w!("Markdown (*.md)"), w!("*.md;*.markdown")),
+    (w!("Text (*.txt)"), w!("*.txt")),
     (w!("All files (*.*)"), w!("*.*")),
 ];
 
@@ -192,7 +194,8 @@ pub fn write(a: &App, id: TabId, path: &Path, encoding: Encoding, eol: Eol) {
                 a,
                 &format!("{name} can\u{2019}t be saved as {encoding}"),
                 &format!(
-                    "It has characters {encoding} can\u{2019}t hold: {}{more}\n\nSave it as UTF-8 instead? Nothing is lost.",
+                    "It has characters {encoding} can\u{2019}t hold: {}{more}\n\n\
+                     Save it as UTF-8 instead? Nothing is lost.",
                     chars.trim_end()
                 ),
                 "Save as UTF-8",
@@ -201,13 +204,13 @@ pub fn write(a: &App, id: TabId, path: &Path, encoding: Encoding, eol: Eol) {
                 command(a, |t| t.save_failed(id));
                 return;
             }
-            command(a, |t| t.set_encoding(id, Encoding::Utf8));
+            command(a, |t| t.use_utf8_instead(id));
             return write(a, id, path, Encoding::Utf8, eol);
         }
     };
     drop(text);
     match atomic::write(path, &bytes) {
-        Ok(_) => {
+        Ok(written) => {
             let stat = super::stat_of(path)
                 .unwrap_or(FileStat { size: bytes.len() as u64, modified: SystemTime::now() });
             // Before `saved`: a close waiting on this save releases the document.
@@ -215,6 +218,9 @@ pub fn write(a: &App, id: TabId, path: &Path, encoding: Encoding, eol: Eol) {
                 send(e, sci::SCI_SETSAVEPOINT);
             });
             command(a, |t| t.saved(id, path.to_path_buf(), stat, Instant::now()));
+            if written == atomic::Written::InPlace {
+                command(a, |_| vec![Action::Flash(StatusNote::SavedInPlace)]);
+            }
         }
         Err(e) => {
             // The outcome goes in before the message box pumps messages.
@@ -255,7 +261,7 @@ fn confirm(a: &App, instruction: &str, content: &str, yes: &str) -> bool {
 fn reopen_choices(current: Encoding) -> Vec<Encoding> {
     let mut choices = Encoding::MENU.to_vec();
     let ansi = codepage::to_encoding(unsafe { GetACP() } as u16)
-        .filter(|e| ![encoding_rs::WINDOWS_1252, encoding_rs::UTF_8, encoding_rs::UTF_16LE, encoding_rs::UTF_16BE].contains(e))
+        .filter(|e| ![WINDOWS_1252, UTF_8, UTF_16LE, UTF_16BE].contains(e))
         .map(Encoding::Other);
     for extra in [Some(current), ansi].into_iter().flatten() {
         if !choices.contains(&extra) {

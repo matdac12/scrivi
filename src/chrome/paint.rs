@@ -14,8 +14,9 @@ use windows::Win32::Graphics::Direct2D::{
     D2D1_ROUNDED_RECT,
 };
 use windows::Win32::Graphics::DirectWrite::{
-    DWriteCreateFactory, IDWriteFactory, IDWriteTextFormat, DWRITE_HIT_TEST_METRICS, DWRITE_LINE_METRICS, DWRITE_FACTORY_TYPE_SHARED, DWRITE_FONT_STRETCH_NORMAL,
-    DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_MEASURING_MODE_NATURAL,
+    DWriteCreateFactory, IDWriteFactory, IDWriteTextFormat, DWRITE_FACTORY_TYPE_SHARED, DWRITE_FONT_STRETCH_NORMAL,
+    DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_HIT_TEST_METRICS, DWRITE_LINE_METRICS,
+    DWRITE_MEASURING_MODE_NATURAL,
     DWRITE_PARAGRAPH_ALIGNMENT_CENTER, DWRITE_TEXT_ALIGNMENT, DWRITE_TEXT_ALIGNMENT_CENTER,
     DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_TEXT_METRICS, DWRITE_TRIMMING, DWRITE_TRIMMING_GRANULARITY_CHARACTER,
     DWRITE_WORD_WRAPPING_NO_WRAP,
@@ -229,9 +230,15 @@ impl Pass<'_> {
     }
 
     /// `text`, with its first character underlined: an access key. The
-    /// line goes under that character as DirectWrite lays it out in `r`.
+    /// line goes under that character as DirectWrite lays it out in `r`; if
+    /// that can't be measured, the text shows without it.
     fn text_keyed(&self, s: &str, f: &IDWriteTextFormat, r: Rect, c: u32) -> Result<()> {
         self.text(s, f, r, c)?;
+        let _ = self.underline_first(s, f, r, c);
+        Ok(())
+    }
+
+    fn underline_first(&self, s: &str, f: &IDWriteTextFormat, r: Rect, c: u32) -> Result<()> {
         unsafe {
             let layout = self.dw.CreateTextLayout(&wide(s), f, (r.right - r.left) as f32, (r.bottom - r.top) as f32)?;
             let (mut x, mut y) = (0.0, 0.0);
@@ -242,7 +249,8 @@ impl Pass<'_> {
             layout.GetLineMetrics(Some(&mut line), &mut lines)?;
             let left = r.left + hit.left.round() as i32;
             let top = r.top + (hit.top + line[0].baseline).round() as i32 + self.px(1.5);
-            let underline = Rect { left, top, right: left + hit.width.round() as i32, bottom: top + self.px(1.0).max(1) };
+            let (right, bottom) = (left + hit.width.round() as i32, top + self.px(1.0).max(1));
+            let underline = Rect { left, top, right, bottom };
             self.fill(underline, c, 1.0)
         }
     }
