@@ -1,6 +1,7 @@
 //! One test per Tab rule in spec §3, §7 and §8. Each name states the rule.
 
 use super::*;
+use crate::textfile::LARGE_FILE_BYTES;
 
 fn names(tabs: &Tabs) -> Vec<String> {
     tabs.iter().map(Tab::name).collect()

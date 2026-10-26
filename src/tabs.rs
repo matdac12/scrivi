@@ -14,30 +14,7 @@
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime};
 
-// Placeholders for `textfile::Encoding`, `textfile::Eol` and the Large file
-// threshold, which 02 owns. When 02 lands, delete these three and write
-// `pub use crate::textfile::{Encoding, Eol, LARGE_FILE_BYTES};`.
-
-/// How a Tab's text is encoded on disk.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Encoding {
-    Utf8,
-    Utf8Bom,
-    Utf16Le,
-    Utf16Be,
-    Windows1252,
-}
-
-/// A Tab's line ending.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Eol {
-    Lf,
-    Crlf,
-    Cr,
-}
-
-/// Over this many bytes on disk a file is a Large file (spec §7).
-pub const LARGE_FILE_BYTES: u64 = 50 * 1024 * 1024;
+use crate::textfile::{self, Encoding, Eol};
 
 /// Over this many bytes of text a Markdown file loses styling, spell check
 /// and the Rendered view (spec §5, the 1 MB rule).
@@ -474,7 +451,7 @@ impl Tabs {
         tab.disk = Some(file.stat);
         tab.last_seen = Some(file.stat);
         tab.text_len = file.text_len;
-        tab.large = file.stat.size > LARGE_FILE_BYTES;
+        tab.large = textfile::is_large(file.stat.size);
         tab.unsaved = false;
         let keep_large_notice = tab.notice == Some(Notice::LargeFile);
         tab.notice =
@@ -964,7 +941,7 @@ impl Tabs {
         actions
     }
 
-    /// Appends a fresh Tab with the defaults for new files: UTF-8, LF.
+    /// Appends a fresh Tab with the defaults for new files (`textfile::NEW_FILE`).
     fn push(&mut self, path: Option<PathBuf>, untitled_number: u32) -> TabId {
         self.next_id += 1;
         let id = TabId(self.next_id);
@@ -976,8 +953,8 @@ impl Tabs {
             unsaved: false,
             view: View::Source,
             notice: None,
-            encoding: Encoding::Utf8,
-            eol: Eol::Lf,
+            encoding: textfile::NEW_FILE.0,
+            eol: textfile::NEW_FILE.1,
             large: false,
             text_len: 0,
             loaded: false,
