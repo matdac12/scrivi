@@ -6,6 +6,7 @@ mod chrome;
 mod editor;
 mod launch;
 mod mdstyle;
+mod mdview;
 mod prefs;
 mod proto;
 mod rendered;
