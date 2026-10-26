@@ -1,11 +1,11 @@
 # Scrivi
 
 A minimal text editor for Windows that replaces Notepad. It opens every
-plain-text file, in tabs in one window, and gives markdown files light styling
+plain-text file, in Tabs in one Window, and gives markdown files light styling
 plus a read-only rendered view on <kbd>Ctrl</kbd>+<kbd>E</kbd>.
 
 Lean Rust on plain Win32: a few MB of memory when idle, no browser engine
-running behind it (WebView2 exists only while a tab is in the Rendered view).
+running behind it (WebView2 exists only while a Tab is in the Rendered view).
 Part of [mstack](https://github.com/matdac12/mstack).
 
 <!-- SCREENSHOT: placeholder. Issue 06 or 09 adds the screenshot of the Window here. -->
@@ -53,7 +53,7 @@ The script builds with `cargo build --release` (Rust 1.99.1, pinned by
 ## Usage
 
 - `scrivi.exe` adds an Untitled tab. `scrivi.exe <path>` opens the file in a
-  tab, or switches to its tab if it's already open. There is only ever one
+  Tab, or switches to its Tab if it's already open. There is only ever one
   Window; a second launch hands over to the first.
 - Files save explicitly. If a file changes on disk, a Notice offers Keep mine
   or Reload.
