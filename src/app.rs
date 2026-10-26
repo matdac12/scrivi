@@ -48,7 +48,7 @@ use crate::chrome::{Frame, Hit, Layout, Painter, Rect, Status, TabView, View};
 use crate::editor::{sci, Caret, Editor, NotifyHeader, ViewState};
 use crate::launch::{self, Request};
 use crate::mdview::{self, Applied};
-use crate::proto::{self, COPYDATA_REQUEST, ICON, RESTYLE_MS, SPELL_MS, TIMER_RESTYLE, TIMER_SPELL, WM_EDITOR_DPI, WM_HANDOFF};
+use crate::proto::{self, COPYDATA_REQUEST, ICON, RESTYLE_MS, SPELL_MS, TIMER_PREFS, TIMER_RESTYLE, TIMER_SPELL, WM_EDITOR_DPI, WM_HANDOFF};
 use crate::spellview::SpellView;
 use crate::tabs::{Action, CloseReply, EditorDoc, FileStat, LoadedFile, StatusNote, Tab, TabId, Tabs};
 use crate::textfile::{self, Encoding, Eol};
@@ -57,6 +57,7 @@ use crate::textfile::{self, Encoding, Eol};
 mod atomic;
 mod files;
 mod menu;
+mod recent;
 
 /// First size of the Window, in DIPs, before prefs (09) remembers one.
 const START_W: f32 = 1100.0;
@@ -106,6 +107,8 @@ pub mod cmd {
     pub const ZOOM_IN: u16 = 142;
     pub const ZOOM_OUT: u16 = 143;
     pub const ZOOM_RESET: u16 = 144;
+    /// File › Recent files: `RECENT + i` is the i-th (SCRIVI-23).
+    pub const RECENT: u16 = 200;
 }
 
 /// What the chrome shows; borrowed only for short stretches that make no
@@ -248,6 +251,7 @@ pub fn run(initial: Request) -> i32 {
             let _ = ChangeWindowMessageFilterEx(hwnd, msg, MSGFLT_ALLOW, None);
         }
         place(hwnd);
+        let maximized = recent::restore_window(hwnd);
 
         let dpi = GetDpiForWindow(hwnd);
         let Ok(painter) = Painter::new(hinstance, dpi as f32 / 96.0) else { return 1 };
@@ -293,11 +297,12 @@ pub fn run(initial: Request) -> i32 {
         APP.with(|c| {
             let _ = c.set(a);
         });
+        recent::apply_view(a);
         relayout(a);
         // The start state: one empty Untitled tab, or the files the launch names.
         on_handoff(initial);
         if !headless() {
-            let _ = ShowWindow(hwnd, SW_SHOW);
+            let _ = ShowWindow(hwnd, if maximized { SW_SHOWMAXIMIZED } else { SW_SHOW });
             let _ = SetFocus(Some(a.editor.hwnd()));
         }
 
@@ -515,8 +520,7 @@ fn perform(a: &App, action: Action) {
                 SetTimer(Some(a.hwnd), timer, ms, None);
             }
         }
-        // 15: the recent files and the jump list.
-        Action::AddRecent(_) => {}
+        Action::AddRecent(path) => recent::add(a, &path),
         Action::OpenInAnotherTab { name } => message(a, &format!("{name} is open in another tab. Close it first.")),
         Action::Flash(note) => {
             let status = {
@@ -1254,6 +1258,8 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                 let _ = KillTimer(Some(hwnd), timer);
                 if timer == TIMER_RESTYLE {
                     restyle(a);
+                } else if timer == TIMER_PREFS {
+                    recent::flush(hwnd);
                 } else if timer == TIMER_SPELL {
                     spellcheck(a);
                 } else if timer == FLASH_TIMER {
@@ -1281,7 +1287,12 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                 if wp.0 as u32 != SIZE_MINIMIZED {
                     relayout(a);
                 }
+                recent::window_changed(hwnd);
                 LRESULT(0)
+            }
+            WM_MOVE => {
+                recent::window_changed(hwnd);
+                DefWindowProcW(hwnd, msg, wp, lp)
             }
             WM_GETMINMAXINFO => {
                 let info = &mut *(lp.0 as *mut MINMAXINFO);
@@ -1342,6 +1353,9 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                             files::save_point(a, n.code == sci::SCN_SAVEPOINTLEFT)
                         }
                         sci::SCN_UPDATEUI | sci::SCN_ZOOM => {
+                            if n.code == sci::SCN_ZOOM {
+                                recent::zoom_changed(a);
+                            }
                             refresh_status(a);
                             if a.spell.scrolled_away(&a.editor) {
                                 arm_spell(a);
@@ -1410,6 +1424,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                 LRESULT(0)
             }
             WM_DESTROY => {
+                recent::flush(hwnd);
                 PostQuitMessage(0);
                 LRESULT(0)
             }

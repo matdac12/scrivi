@@ -102,6 +102,8 @@ pub enum StatusNote {
     /// The safe save (temp file, then replace) failed, but writing over the
     /// file in place worked.
     SavedInPlace,
+    /// A recent file picked from File › Recent files no longer exists.
+    RecentGone,
 }
 
 impl StatusNote {
@@ -112,6 +114,7 @@ impl StatusNote {
             StatusNote::StylingOff => "Markdown styling off (over 1 MB)",
             StatusNote::RenderedView => "Rendered view \u{b7} Esc to edit",
             StatusNote::TooLargeToRender => "Too large to render",
+            StatusNote::RecentGone => "That file no longer exists: removed from Recent files",
             StatusNote::SavedInPlace => "Saved in place: the safe replace failed",
             StatusNote::InvalidBytes => concat!(
                 "Read-only: some bytes don\u{2019}t fit this encoding ",
