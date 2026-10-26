@@ -305,8 +305,10 @@ Manager (Details tab) for memory and size, and Process Explorer or `Get-CimInsta
   `$s = 'x' * 99 + "`n"; [IO.File]::WriteAllText("$env:TEMP\50mb.log", $s * 540000)` (about 54 MB, just over the 50 MiB limit), then open it.
   - Expect: read-only Notice, usable at once; record the time.
 - [ ] **200 MB log.** The same with `* 2000000`.
-  - Expect: record the time. SCRIVI-18 measured about 1 s on a busy machine; the spec target is about 337 ms
-    (see SCRIVI-30, which tracks the gap).
+  - Expect: record the time. SCRIVI-18 measured about 1 s on a busy machine; the spec target is about 337 ms.
+    SCRIVI-30 measured the in-process load (read, decode, fill; release build, warm cache) at about
+    0.36 s before and 0.30 s after its plain-ASCII fast path: what is left is mostly Scintilla's own
+    insert, so a GUI number much over that is the machine, not the load path.
 - [ ] **Exe size.** `(Get-Item .\scrivi.exe).Length`.
   - Expect: record it. Now 2.57 MB, against the spec's 1–2 MB; a known limitation (README).
 - [ ] **Idle memory.** One empty Untitled tab, wait a minute; Task Manager > Details > *Memory (private working set)*.

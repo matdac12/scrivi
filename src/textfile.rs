@@ -177,6 +177,17 @@ pub fn decode(bytes: &[u8], ansi_code_page: u16) -> Decoded {
 /// (most files, and every Large file worth the name) becomes the text without
 /// a copy.
 pub fn decode_owned(bytes: Vec<u8>, ansi_code_page: u16) -> Decoded {
+    if is_plain_ascii(&bytes) {
+        // SAFETY: ASCII is valid UTF-8, and `is_plain_ascii` proved every byte
+        // is ASCII.
+        let text = unsafe { String::from_utf8_unchecked(bytes) };
+        return Decoded {
+            text,
+            encoding: Encoding::Utf8,
+            eol: Eol::Lf,
+            lossy: false,
+        };
+    }
     let plain = !bytes.starts_with(&[0xEF, 0xBB, 0xBF])
         && !bytes.starts_with(&[0xFF, 0xFE])
         && !bytes.starts_with(&[0xFE, 0xFF])
@@ -196,6 +207,29 @@ pub fn decode_owned(bytes: Vec<u8>, ansi_code_page: u16) -> Decoded {
         }
     }
     decode(&bytes, ansi_code_page)
+}
+
+/// Plain ASCII: no byte over 0x7F, no NUL, no CR. Those files are UTF-8
+/// without a BOM, are not UTF-16 however their NULs would fall, and every
+/// line break in them is an LF. One pass over the bytes settles the encoding,
+/// the line ending and the validity at once: the big logs' case.
+fn is_plain_ascii(bytes: &[u8]) -> bool {
+    const HIGH_BITS: u64 = 0x8080_8080_8080_8080;
+    const LOW_BITS: u64 = 0x0101_0101_0101_0101;
+    const CR: u64 = 0x0D0D_0D0D_0D0D_0D0D;
+    // The classic byte-at-a-time trick: a word has a zero byte when the borrow
+    // from the low bits reaches one of its high bits.
+    fn has_zero(w: u64) -> bool {
+        (w.wrapping_sub(LOW_BITS) & !w & HIGH_BITS) != 0
+    }
+    let (words, rest) = bytes.as_chunks::<8>();
+    for word in words {
+        let w = u64::from_ne_bytes(*word);
+        if w & HIGH_BITS != 0 || has_zero(w) || has_zero(w ^ CR) {
+            return false;
+        }
+    }
+    rest.iter().all(|b| b.is_ascii() && *b != 0 && *b != b'\r')
 }
 
 /// Re-read `bytes` in a chosen encoding (Reopen with encoding…). Malformed
@@ -671,6 +705,16 @@ mod tests {
             utf16,
             b"caff\xe8 \x80\n".to_vec(),
             b"a\0b\0c\0".to_vec(),
+            // Around the plain-ASCII fast path: exact word lengths, and the
+            // one byte that leaves it, at every offset.
+            b"exactly8".to_vec(),
+            b"ninebytes".to_vec(),
+            b"seventeen bytes!\n".to_vec(),
+            "plain then caff\u{e8}\n".as_bytes().to_vec(),
+            [&[0xEF, 0xBB, 0xBF][..], b"bom\n"].concat(),
+            b"plain then nul\0\n".to_vec(),
+            b"plain then cr\r\n".to_vec(),
+            b"plain then bad \xff\n".to_vec(),
         ];
         for bytes in samples {
             assert_eq!(
@@ -678,6 +722,26 @@ mod tests {
                 decode(&bytes, 1252),
                 "{bytes:?}"
             );
+        }
+    }
+
+    #[test]
+    fn plain_ascii_is_ascii_without_nul_or_cr() {
+        assert!(is_plain_ascii(b""));
+        assert!(is_plain_ascii(b"plain\nlines\n"));
+        assert!(is_plain_ascii(b"exactly8"));
+        assert!(is_plain_ascii(b"nine-byte"));
+        assert!(!is_plain_ascii("caff\u{e8}\n".as_bytes()), "non-ASCII");
+        assert!(!is_plain_ascii(b"a\0b"), "NUL: maybe UTF-16");
+        assert!(!is_plain_ascii(b"dos\r\nlines"), "CRLF is not LF");
+        assert!(!is_plain_ascii(b"lone\rending"), "CR is not LF");
+        // A bad byte in the last, partial word counts too, at every offset.
+        for bad in [0x80u8, 0x00, 0x0D] {
+            for at in 0..17 {
+                let mut bytes = vec![b'a'; at];
+                bytes.push(bad);
+                assert!(!is_plain_ascii(&bytes), "{bad:#x} at {at}");
+            }
         }
     }
 
