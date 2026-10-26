@@ -87,8 +87,19 @@ CapsLock & n::Run("<path>\scrivi.exe")
 
 ## Known limitations
 
-<!-- Issue 16 fills this in from the registration checks in docs/qa.md. -->
-*(To be filled in before the first release.)*
+- **Setting scrivi as the default is one step you do.** Windows does not let an app make itself the
+  default. `scrivi.exe --register` adds scrivi to Default apps and opens that page; you pick it per file
+  type (`.txt`, `.md`, `.log`, ...). scrivi never writes `UserChoice`.
+- **Newer Windows 11 builds** may use `UserChoiceLatest`, which only Settings can write. Picking scrivi in
+  Settings should still work. To be confirmed in the v1 hand check.
+- **Files with no extension:** scrivi registers for them, but whether Settings offers that type is to be
+  confirmed in the v1 hand check.
+- **Explorer's Edit verb:** scrivi registers an Edit verb, but whether Explorer uses it for `.txt` and
+  `.ini` is to be confirmed in the v1 hand check. From research, types that hard-code Notepad (`.bat`,
+  `.reg`) keep Notepad.
+- **Right-click > New > Text Document:** to be confirmed in the v1 hand check.
+
+The steps for each check are in [docs/qa.md](docs/qa.md).
 
 ## Releasing
 
