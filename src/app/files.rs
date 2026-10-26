@@ -404,4 +404,37 @@ mod tests {
         let plain = reopen_choices(Encoding::Utf8);
         assert!(plain.iter().filter(|e| **e == Encoding::Utf8).count() == 1);
     }
+
+    /// Open a 200 MB log the way `Action::Load` does (read, decode, create the
+    /// document, fill it) in a real, never shown Scintilla control. Run:
+    /// `SCRIVI_TIMING_FILE=<path> cargo test --release load_timing -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn load_timing() {
+        use std::time::Instant;
+        use windows::Win32::Foundation::HWND;
+        use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+        use windows::Win32::UI::WindowsAndMessaging::HWND_MESSAGE;
+        let path = PathBuf::from(std::env::var("SCRIVI_TIMING_FILE").expect("SCRIVI_TIMING_FILE"));
+        let hinstance = unsafe { GetModuleHandleW(None).unwrap() }.into();
+        assert!(Editor::register_class(hinstance));
+        let parent: HWND = HWND_MESSAGE;
+        let e = Editor::create(parent, hinstance, 96).expect("editor");
+        let t = Instant::now();
+        let (bytes, stat) = super::super::read_file(&path).unwrap();
+        let read = t.elapsed();
+        let decoded = textfile::decode_owned(bytes, 1252);
+        let decode = t.elapsed();
+        let large = textfile::is_large(stat.size);
+        let doc = e.create_document(large);
+        e.show_document(doc);
+        e.set_eol_mode(decoded.eol);
+        e.fill(&decoded.text, large);
+        let total = t.elapsed();
+        eprintln!(
+            "{} MB, large={large}: read {read:?}, + decode {decode:?}, total {total:?}; {} bytes in the document",
+            stat.size / (1024 * 1024),
+            e.text_len()
+        );
+    }
 }

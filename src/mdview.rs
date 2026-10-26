@@ -344,7 +344,7 @@ let x = 1;
         while text.len() < 900_000 {
             text.push_str(para);
         }
-        e.fill(&text);
+        e.fill(&text, false);
         let t = std::time::Instant::now();
         let runs = mdstyle::style_runs(&text);
         let parse = t.elapsed();

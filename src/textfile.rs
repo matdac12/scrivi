@@ -173,6 +173,26 @@ pub fn decode(bytes: &[u8], ansi_code_page: u16) -> Decoded {
     }
 }
 
+/// [`decode`] for bytes the caller no longer needs: valid UTF-8 without a BOM
+/// (most files, and every Large file worth the name) becomes the text without
+/// a copy.
+pub fn decode_owned(bytes: Vec<u8>, ansi_code_page: u16) -> Decoded {
+    let plain = !bytes.starts_with(&[0xEF, 0xBB, 0xBF])
+        && !bytes.starts_with(&[0xFF, 0xFE])
+        && !bytes.starts_with(&[0xFE, 0xFF])
+        && sniff_utf16_without_bom(&bytes).is_none();
+    if plain {
+        match String::from_utf8(bytes) {
+            Ok(text) => {
+                let eol = detect_eol(&text);
+                return Decoded { text, encoding: Encoding::Utf8, eol, lossy: false };
+            }
+            Err(e) => return decode(e.as_bytes(), ansi_code_page),
+        }
+    }
+    decode(&bytes, ansi_code_page)
+}
+
 /// Re-read `bytes` in a chosen encoding (Reopen with encoding…). Malformed
 /// sequences become U+FFFD. A matching BOM is stripped.
 pub fn decode_as(bytes: &[u8], encoding: Encoding) -> Decoded {
@@ -264,6 +284,10 @@ fn sniff_utf16_without_bom(bytes: &[u8]) -> Option<Encoding> {
     if pairs == 0 || !bytes.len().is_multiple_of(2) {
         return None;
     }
+    // Text without a single NUL is not UTF-16 (a fast memchr, not a count).
+    if !bytes.contains(&0) {
+        return None;
+    }
     let (mut even_nul, mut odd_nul) = (0usize, 0usize);
     for (i, &b) in bytes.iter().enumerate() {
         if b == 0 {
@@ -286,8 +310,12 @@ fn sniff_utf16_without_bom(bytes: &[u8]) -> Option<Encoding> {
 /// The line ending used most; ties go to LF, then CRLF, then CR. A text with
 /// no line break is LF.
 pub fn detect_eol(text: &str) -> Eol {
-    let (mut lf, mut crlf, mut cr) = (0usize, 0usize, 0usize);
     let b = text.as_bytes();
+    // No CR at all (a fast memchr): every break is an LF.
+    if !b.contains(&b'\r') {
+        return Eol::Lf;
+    }
+    let (mut lf, mut crlf, mut cr) = (0usize, 0usize, 0usize);
     let mut i = 0;
     while i < b.len() {
         match b[i] {
@@ -623,5 +651,31 @@ mod tests {
         );
         let eols: Vec<_> = Eol::MENU.iter().map(|e| e.to_string()).collect();
         assert_eq!(eols, ["LF", "CRLF", "CR"]);
+    }
+
+    #[test]
+    fn decode_owned_matches_decode() {
+        let mut utf16 = vec![0xFF, 0xFE];
+        utf16.extend("caff\u{e8}\r\n".encode_utf16().flat_map(u16::to_le_bytes));
+        let samples: Vec<Vec<u8>> = vec![
+            Vec::new(),
+            b"plain\nlines\n".to_vec(),
+            b"dos\r\nlines\r\n".to_vec(),
+            "caff\u{e8}\n".as_bytes().to_vec(),
+            [&[0xEF, 0xBB, 0xBF][..], b"bom\r\n"].concat(),
+            utf16,
+            b"caff\xe8 \x80\n".to_vec(),
+            b"a\0b\0c\0".to_vec(),
+        ];
+        for bytes in samples {
+            assert_eq!(decode_owned(bytes.clone(), 1252), decode(&bytes, 1252), "{bytes:?}");
+        }
+    }
+
+    #[test]
+    fn a_text_with_no_cr_is_lf_and_a_lone_cr_still_counts() {
+        assert_eq!(detect_eol("a\nb\nc"), Eol::Lf);
+        assert_eq!(detect_eol("a\rb\rc\n"), Eol::Cr);
+        assert_eq!(detect_eol("a\r\nb\r\nc\n"), Eol::Crlf);
     }
 }
