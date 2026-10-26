@@ -22,6 +22,10 @@ Rules for anyone (human or agent) changing this repo.
   `CHANGELOG.md` updated in the same commit; `release.yml` builds and
   publishes. Steps in the README's *Releasing* section. Releases are unsigned.
   Never move or re-push a published tag; cut a new patch version instead.
+- **App icon:** `assets/scrivi.ico` is generated, never hand-edited — run
+  `pwsh -File scripts/make-icon.ps1` (needs Chrome or Edge; `-Verify` only
+  checks it) to rebuild it from `assets/scrivi.svg` and, at 16 and 20 px,
+  `assets/scrivi-small.svg`.
 
 ## Checks (CI runs the same three on `windows-latest`)
 

@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256" role="img" aria-labelledby="t">
+  <title id="t">scrivi icon, small size: the quill with a thicker stroke and no nib tail</title>
+  <!-- Used only at 16 and 20 px, where the full drawing turns to mush: the stem
+       is more than twice as thick (26 vs 12) and the nib tail is dropped. -->
+  <defs><linearGradient id="tile" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FAF6EC"/><stop offset="1" stop-color="#E9E0CE"/></linearGradient><linearGradient id="gloss" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity="0.4"/><stop offset=".6" stop-color="#fff" stop-opacity="0"/></linearGradient><linearGradient id="vane1" x1="0" y1="0" x2="1" y2="0.6"><stop offset="0" stop-color="#C06B44"/><stop offset="1" stop-color="#9A4A2B"/></linearGradient><linearGradient id="vane2" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#4A4036"/><stop offset="1" stop-color="#2B2520"/></linearGradient><linearGradient id="stem" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#3A332B"/><stop offset="1" stop-color="#221E19"/></linearGradient></defs>
+
+  <rect x="8" y="8" width="240" height="240" rx="54" fill="url(#tile)"/>
+  <rect x="8" y="8" width="240" height="240" rx="54" fill="url(#gloss)"/>
+  <rect x="8.75" y="8.75" width="238.5" height="238.5" rx="53.25" fill="none" stroke="#000" stroke-opacity="0.1" stroke-width="1.5"/>
+  <path d="M184 56C144 52 104 78 92 118c38 12 78-14 92-62Z" fill="url(#vane1)"/>
+  <path d="M184 56c-6 40-32 76-70 96 2-40 26-78 70-96Z" fill="url(#vane2)"/>
+  <path d="M90 192 180 62" stroke="url(#stem)" stroke-width="26" stroke-linecap="round" fill="none"/>
+</svg>
