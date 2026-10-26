@@ -1,0 +1,37 @@
+[package]
+name = "scrivi"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "A minimal text editor for Windows that replaces Notepad."
+
+[dependencies]
+windows-core = "=0.62.2"
+pulldown-cmark = "0.13"
+ammonia = "4"
+encoding_rs = "0.8"
+chardetng = "1"
+codepage = "0.1"
+notify = "8"
+notify-debouncer-full = "0.6"
+webview2-com = "0.39"
+
+[dependencies.windows]
+version = "=0.62.2"
+# Each worker adds the features its module uses.
+features = [
+    "Win32_Foundation",
+    "Win32_UI_WindowsAndMessaging",
+]
+
+[build-dependencies]
+cc = { version = "1", features = ["parallel"] }
+# Compiles assets/scrivi.rc (the icon); the DPI manifest stays on the linker.
+embed-resource = "3.0.12"
+
+[profile.release]
+lto = true
+codegen-units = 1
+opt-level = "s"
+panic = "abort"
+strip = true

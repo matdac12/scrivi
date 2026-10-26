@@ -9,4 +9,4 @@ running behind it. Part of [mstack](https://github.com/matdac12/mstack).
 
 ## Status
 
-Planning. The v1 spec and build backlog are being charted; there is no code yet.
+Building v1: the crate skeleton (Scintilla built in, CI) is in place; the editor itself is not yet.
