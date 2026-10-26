@@ -27,10 +27,13 @@ Rules for anyone (human or agent) changing this repo.
   checks it) to rebuild it from `assets/scrivi.svg` and, at 16 and 20 px,
   `assets/scrivi-small.svg`.
 
-## Checks (CI runs the same three on `windows-latest`)
+## Checks (CI runs the same six on `windows-latest`)
 
 ```
+cargo fmt --check
 cargo build --release
 cargo clippy --all-targets -- -D warnings
 cargo test
+powershell -NoProfile -File scripts\install.tests.ps1
+pwsh -NoProfile -File scripts\install.tests.ps1
 ```
