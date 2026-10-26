@@ -1,28 +1,52 @@
 //! End-to-end launch tests against the real binary, headless: the placeholder
 //! resident has a hidden window and logs each request to `SCRIVI_TEST_LOG`.
 //!
-//! They need the `Scrivi.Window` class to be free: end any running scrivi.exe
-//! first. One test function, because every step shares the single resident
-//! (window class + mutex are per-user, not per-test).
+//! Each test gives every process it starts its own `SCRIVI_TEST_INSTANCE`
+//! (debug builds suffix the window class and mutex with it), so it never
+//! meets a running scrivi or another worktree's test.
 
 use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus};
 use std::time::{Duration, Instant};
 
-use windows::core::{w, PCWSTR};
+use windows::core::{HSTRING, PCWSTR};
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::WindowsAndMessaging::{FindWindowExW, FindWindowW};
 
-const CLASS: PCWSTR = w!("Scrivi.Window");
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 const EXE: &str = env!("CARGO_BIN_EXE_scrivi");
 
-/// Both tests use the per-user class, so they run one at a time.
-static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+/// One test's own resident: its `SCRIVI_TEST_INSTANCE` value.
+struct Instance(String);
 
-fn find() -> Option<HWND> {
-    unsafe { FindWindowW(CLASS, PCWSTR::null()) }.ok()
+impl Instance {
+    fn new(test: &str) -> Instance {
+        Instance(format!("{}-{test}", std::process::id()))
+    }
+
+    fn class(&self) -> HSTRING {
+        HSTRING::from(format!("Scrivi.Window.{}", self.0))
+    }
+
+    fn find(&self) -> Option<HWND> {
+        unsafe { FindWindowW(&self.class(), PCWSTR::null()) }.ok()
+    }
+
+    /// A second Window of this instance after `hwnd`, if any.
+    fn another(&self, hwnd: HWND) -> bool {
+        unsafe { FindWindowExW(None, Some(hwnd), &self.class(), PCWSTR::null()) }.is_ok()
+    }
+
+    fn scrivi(&self, log: &Path, args: &[&str]) -> Command {
+        let mut c = Command::new(EXE);
+        c.args(args)
+            .env("SCRIVI_TEST_INSTANCE", &self.0)
+            .env("SCRIVI_TEST_LOG", log)
+            .env("SCRIVI_TEST_ALLOW_ELEVATED", "1")
+            .creation_flags(CREATE_NO_WINDOW);
+        c
+    }
 }
 
 fn wait_until(what: &str, mut f: impl FnMut() -> bool) {
@@ -34,15 +58,6 @@ fn wait_until(what: &str, mut f: impl FnMut() -> bool) {
         std::thread::sleep(Duration::from_millis(25));
     }
     panic!("timed out waiting for {what}");
-}
-
-fn scrivi(log: &Path, args: &[&str]) -> Command {
-    let mut c = Command::new(EXE);
-    c.args(args)
-        .env("SCRIVI_TEST_LOG", log)
-        .env("SCRIVI_TEST_ALLOW_ELEVATED", "1")
-        .creation_flags(CREATE_NO_WINDOW);
-    c
 }
 
 fn wait_exit(child: &mut Child, what: &str) -> ExitStatus {
@@ -69,18 +84,19 @@ impl Drop for Resident {
     }
 }
 
-fn temp_dir() -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("scrivi-launch-test-{}", std::process::id()));
+fn temp_dir(test: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("scrivi-launch-test-{}-{test}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     dir
 }
 
 #[test]
 fn launch_lifecycle() {
-    let _guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let me = Instance::new("lifecycle");
+    let (find, scrivi) = (|| me.find(), |log: &Path, args: &[&str]| me.scrivi(log, args));
     assert!(Path::new(EXE).exists());
-    assert!(find().is_none(), "a Scrivi.Window already exists: end any running scrivi.exe and retry");
-    let dir = temp_dir();
+    assert!(find().is_none());
+    let dir = temp_dir("lifecycle");
     let log = dir.join("requests.log");
 
     // --register / --unregister with no resident: exit 0, nothing started.
@@ -102,7 +118,7 @@ fn launch_lifecycle() {
     assert!(status.success());
     assert_eq!(lines(&log)[1], format!("Open\t{}", notes.display()));
     assert_eq!(find(), Some(hwnd));
-    assert!(unsafe { FindWindowExW(None, Some(hwnd), CLASS, PCWSTR::null()) }.is_err());
+    assert!(!me.another(hwnd));
     assert!(resident.0.try_wait().unwrap().is_none(), "resident died");
 
     // No arguments: a new tab. Several paths: all of them, in order.
@@ -133,7 +149,7 @@ fn launch_lifecycle() {
     want.sort();
     assert_eq!(got, want);
     assert_eq!(find(), Some(hwnd));
-    assert!(unsafe { FindWindowExW(None, Some(hwnd), CLASS, PCWSTR::null()) }.is_err());
+    assert!(!me.another(hwnd));
     assert!(resident.0.try_wait().unwrap().is_none(), "resident died");
 
     // Killing the resident frees the class.
@@ -145,9 +161,10 @@ fn launch_lifecycle() {
 /// Two cold launches at once: one becomes the resident, the other hands over to it.
 #[test]
 fn cold_race_leaves_one_resident() {
-    let _guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    wait_until("the class to be free", || find().is_none());
-    let dir = temp_dir().join("race");
+    let me = Instance::new("race");
+    let (find, scrivi) = (|| me.find(), |log: &Path, args: &[&str]| me.scrivi(log, args));
+    assert!(find().is_none());
+    let dir = temp_dir("race");
     std::fs::create_dir_all(&dir).unwrap();
     let log = dir.join("requests.log");
 

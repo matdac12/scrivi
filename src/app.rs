@@ -47,9 +47,14 @@ use windows::Win32::UI::WindowsAndMessaging::*;
 use crate::chrome::{Frame, Hit, Layout, Painter, Rect, Status, TabView, View};
 use crate::editor::{sci, Caret, Editor, NotifyHeader, ViewState};
 use crate::launch::{self, Request};
-use crate::proto::{CLASS, COPYDATA_REQUEST, ICON, WM_EDITOR_DPI, WM_HANDOFF};
+use crate::proto::{self, COPYDATA_REQUEST, ICON, WM_EDITOR_DPI, WM_HANDOFF};
 use crate::tabs::{Action, CloseReply, EditorDoc, FileStat, LoadedFile, StatusNote, Tab, TabId, Tabs};
 use crate::textfile::{self, Encoding, Eol};
+
+// SCRIVI-16: opening and saving, the menus. New code lives in these files.
+mod atomic;
+mod files;
+mod menu;
 
 /// First size of the Window, in DIPs, before prefs (09) remembers one.
 const START_W: f32 = 1100.0;
@@ -73,6 +78,32 @@ pub mod cmd {
     pub const CLOSE_TAB: u16 = 101;
     pub const NEXT_TAB: u16 = 102;
     pub const PREV_TAB: u16 = 103;
+    // The menus (SCRIVI-16).
+    pub const OPEN: u16 = 104;
+    pub const SAVE: u16 = 105;
+    pub const SAVE_AS: u16 = 106;
+    pub const EXIT: u16 = 107;
+    pub const UNDO: u16 = 110;
+    pub const REDO: u16 = 111;
+    pub const CUT: u16 = 112;
+    pub const COPY: u16 = 113;
+    pub const PASTE: u16 = 114;
+    pub const SELECT_ALL: u16 = 115;
+    pub const FIND: u16 = 116;
+    pub const REPLACE: u16 = 117;
+    pub const GO_TO_LINE: u16 = 118;
+    /// Encoding ›: `ENCODING + i` picks `Encoding::MENU[i]`.
+    pub const ENCODING: u16 = 120;
+    /// The Tab's own encoding, when the menu does not list it: keeps it.
+    pub const ENCODING_KEEP: u16 = 126;
+    pub const REOPEN: u16 = 127;
+    /// Line endings ›: `EOL + i` picks `Eol::MENU[i]`.
+    pub const EOL: u16 = 130;
+    pub const RENDERED_VIEW: u16 = 140;
+    pub const WORD_WRAP: u16 = 141;
+    pub const ZOOM_IN: u16 = 142;
+    pub const ZOOM_OUT: u16 = 143;
+    pub const ZOOM_RESET: u16 = 144;
 }
 
 /// What the chrome shows; borrowed only for short stretches that make no
@@ -180,7 +211,7 @@ pub fn run(initial: Request) -> i32 {
             hIcon: icon(GetSystemMetrics(SM_CXICON)),
             hIconSm: icon(GetSystemMetrics(SM_CXSMICON)),
             hCursor: LoadCursorW(None, IDC_ARROW).unwrap_or_default(),
-            lpszClassName: CLASS,
+            lpszClassName: proto::class(),
             ..Default::default()
         };
         if RegisterClassExW(&class) == 0 {
@@ -188,7 +219,7 @@ pub fn run(initial: Request) -> i32 {
         }
         let Ok(hwnd) = CreateWindowExW(
             WINDOW_EX_STYLE(0),
-            CLASS,
+            proto::class(),
             PCWSTR::null(),
             WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
             CW_USEDEFAULT,
@@ -204,6 +235,11 @@ pub fn run(initial: Request) -> i32 {
         };
         // An elevated launch hands over from a higher integrity level.
         let _ = ChangeWindowMessageFilterEx(hwnd, WM_COPYDATA, MSGFLT_ALLOW, None);
+        // Files dropped from Explorer open in Tabs; 0x49 is WM_COPYGLOBALDATA.
+        windows::Win32::UI::Shell::DragAcceptFiles(hwnd, true);
+        for msg in [WM_DROPFILES, 0x49] {
+            let _ = ChangeWindowMessageFilterEx(hwnd, msg, MSGFLT_ALLOW, None);
+        }
         place(hwnd);
 
         let dpi = GetDpiForWindow(hwnd);
@@ -259,6 +295,9 @@ pub fn run(initial: Request) -> i32 {
         let accelerators = accelerators();
         let mut msg = MSG::default();
         while GetMessageW(&mut msg, None, 0, 0).as_bool() {
+            if menu::pre_translate(&msg) {
+                continue;
+            }
             if TranslateAcceleratorW(hwnd, accelerators, &msg) != 0 {
                 continue;
             }
@@ -281,6 +320,9 @@ fn accelerators() -> HACCEL {
         ACCEL { fVirt: ctrl, key: key(b'W'), cmd: cmd::CLOSE_TAB },
         ACCEL { fVirt: ctrl, key: VK_TAB.0, cmd: cmd::NEXT_TAB },
         ACCEL { fVirt: ctrl | FSHIFT, key: VK_TAB.0, cmd: cmd::PREV_TAB },
+        ACCEL { fVirt: ctrl, key: key(b'O'), cmd: cmd::OPEN },
+        ACCEL { fVirt: ctrl, key: key(b'S'), cmd: cmd::SAVE },
+        ACCEL { fVirt: ctrl | FSHIFT, key: key(b'S'), cmd: cmd::SAVE_AS },
     ];
     unsafe { CreateAcceleratorTableW(&table) }.unwrap_or_default()
 }
@@ -415,12 +457,9 @@ fn perform(a: &App, action: Action) {
             adopt(a, id, doc);
         }
         Action::Load { id, path, encoding, keep_caret_line } => load(a, id, &path, encoding, keep_caret_line),
-        // 08: encode the text and write it; until then nothing is saved.
-        Action::Write { id, .. } => save_stub(a, id),
-        // 08: the Save As dialog.
-        Action::AskSaveAs { id, .. } => save_stub(a, id),
-        // 08: Reopen with encoding… is 08's menu; nothing asks this yet.
-        Action::AskDiscardForReopen { .. } => {}
+        Action::Write { id, path, encoding, eol } => files::write(a, id, &path, encoding, eol),
+        Action::AskSaveAs { id, default } => files::ask_save_as(a, id, &default),
+        Action::AskDiscardForReopen { id, encoding } => files::ask_discard_for_reopen(a, id, encoding),
         Action::ConvertEol { id, eol } => in_document(a, id, |e| e.convert_eols(eol)),
         Action::Activate(id) => show(a, id),
         Action::Changed(id) => {
@@ -605,7 +644,8 @@ fn load(a: &App, id: TabId, path: &Path, encoding: Option<Encoding>, keep_caret_
         a.shown.set(None);
         show(a, id);
     }
-    let file = LoadedFile { encoding: decoded.encoding, eol: decoded.eol, stat, text_len: decoded.text.len() };
+    let file =
+        LoadedFile { encoding: decoded.encoding, eol: decoded.eol, stat, text_len: decoded.text.len(), lossy: decoded.lossy };
     command(a, |t| t.loaded(id, file));
 }
 
@@ -621,14 +661,6 @@ fn read_file(path: &Path) -> std::io::Result<(Vec<u8>, FileStat)> {
 fn stat_of(path: &Path) -> Option<FileStat> {
     let meta = std::fs::metadata(path).ok()?;
     Some(FileStat { size: meta.len(), modified: meta.modified().unwrap_or(SystemTime::UNIX_EPOCH) })
-}
-
-/// 08: saving. Until then a save writes nothing and calls off any close
-/// waiting on it, so no text is ever lost.
-fn save_stub(a: &App, id: TabId) {
-    // The outcome goes in before the message box pumps messages.
-    command(a, |t| t.save_failed(id));
-    message(a, "Saving isn't in this build yet: nothing was written.");
 }
 
 /// A two-choice question with Cancel (spec §8): `save` / `discard` / Cancel.
@@ -950,8 +982,11 @@ fn paint(a: &App) {
                 tabs.iter().map(|t| (t.name(), Some(t.id()) == tabs.active(), t.unsaved())).collect();
             let strip: Vec<TabView> =
                 names.iter().map(|(name, active, unsaved)| TabView { name, active: *active, unsaved: *unsaved }).collect();
+            let (menu_focus, access_keys) = menu::painted();
             let view = View {
                 layout: &ui.layout,
+                menu_focus,
+                access_keys,
                 tabs: &strip,
                 status: &status,
                 hover: ui.hover,
@@ -1093,7 +1128,8 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                         }
                     }
                     Hit::TabClose(_) | Hit::NewTab | Hit::ScrollLeft | Hit::ScrollRight => press(a, hit),
-                    // 08: File, Edit and View open their menus.
+                    // A native menu bar opens on the way down.
+                    Hit::Menu(i) => menu::open(a, i, false),
                     _ => {}
                 }
                 LRESULT(0)
@@ -1154,6 +1190,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                     cmd::CLOSE_TAB => command(a, |t| t.active().map_or_else(Vec::new, |id| t.close(id))),
                     cmd::NEXT_TAB => command(a, Tabs::next),
                     cmd::PREV_TAB => command(a, Tabs::prev),
+                    id if menu::run(a, id) => {}
                     _ => return DefWindowProcW(hwnd, msg, wp, lp),
                 }
                 LRESULT(0)
@@ -1232,6 +1269,9 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                     ui.layout.title
                 };
                 invalidate(a, Some(title));
+                if (wp.0 & 0xffff) as u32 == WA_INACTIVE {
+                    menu::leave(a);
+                }
                 DefWindowProcW(hwnd, msg, wp, lp)
             }
             // -1: activate without repainting a native caption we no longer have.
@@ -1244,6 +1284,10 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                 let n = &*(lp.0 as *const NotifyHeader);
                 if n.hwnd_from == a.editor.hwnd().0 {
                     match n.code {
+                        // Undo back to the save point clears the unsaved dot.
+                        sci::SCN_SAVEPOINTREACHED | sci::SCN_SAVEPOINTLEFT if !a.quiet.get() => {
+                            files::save_point(a, n.code == sci::SCN_SAVEPOINTLEFT)
+                        }
                         sci::SCN_UPDATEUI | sci::SCN_ZOOM => refresh_status(a),
                         // Text typed, deleted, undone: the shown Tab is edited.
                         sci::SCN_MODIFIED if !a.quiet.get() => {
@@ -1281,6 +1325,22 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             WM_HANDOFF => {
                 let request = Box::from_raw(lp.0 as *mut Request);
                 on_handoff(*request);
+                LRESULT(0)
+            }
+            // Alt or F10 alone, and Alt+F, E or V: the menu bar (SCRIVI-16).
+            WM_SYSCOMMAND if (wp.0 & 0xfff0) as u32 == SC_KEYMENU => {
+                if menu::key_menu(a, lp.0 as u32) {
+                    LRESULT(0)
+                } else {
+                    DefWindowProcW(hwnd, msg, wp, lp)
+                }
+            }
+            WM_MENUSELECT => {
+                menu::selected(wp, lp);
+                LRESULT(0)
+            }
+            WM_DROPFILES => {
+                files::dropped(a, windows::Win32::UI::Shell::HDROP(wp.0 as *mut _));
                 LRESULT(0)
             }
             WM_DESTROY => {

@@ -96,6 +96,9 @@ pub enum StatusNote {
     RenderedView,
     /// "Too large to render", after Ctrl+E on a Markdown file over 1 MB.
     TooLargeToRender,
+    /// The file has bytes its encoding cannot hold: the Tab is read-only
+    /// until Reopen with encoding finds one that fits.
+    InvalidBytes,
 }
 
 impl StatusNote {
@@ -106,6 +109,9 @@ impl StatusNote {
             StatusNote::StylingOff => "Markdown styling off (over 1 MB)",
             StatusNote::RenderedView => "Rendered view \u{b7} Esc to edit",
             StatusNote::TooLargeToRender => "Too large to render",
+            StatusNote::InvalidBytes => {
+                "Read-only: some bytes don\u{2019}t fit this encoding \u{b7} Encoding \u{203a} Reopen with encoding\u{2026}"
+            }
         }
     }
 }
@@ -127,6 +133,8 @@ pub struct LoadedFile {
     pub stat: FileStat,
     /// Length of the text in the editor document, in bytes.
     pub text_len: usize,
+    /// Some bytes were not valid in `encoding` (`textfile::Decoded::lossy`).
+    pub lossy: bool,
 }
 
 /// Where the Save As dialog starts.
@@ -223,8 +231,12 @@ pub struct Tab {
     /// The N in "Untitled N"; kept after a Save As, but then unused.
     untitled_number: u32,
     document: Option<EditorDoc>,
-    /// Edits (or an encoding / line-ending choice) not yet in the file.
+    /// The text is away from its save point: edits not yet in the file.
     edited: bool,
+    /// An encoding or line-ending choice not yet in the file.
+    chosen: bool,
+    /// The file has bytes its encoding cannot hold: read-only.
+    lossy: bool,
     /// The file was deleted on disk and is still gone.
     missing: bool,
     view: View,
@@ -298,7 +310,7 @@ impl Tab {
     /// Shows the unsaved dot and asks before closing: it has edits not yet
     /// written, or its file was deleted on disk.
     pub fn unsaved(&self) -> bool {
-        self.edited || self.missing
+        self.edited || self.chosen || self.missing
     }
 
     pub fn view(&self) -> View {
@@ -319,9 +331,10 @@ impl Tab {
         self.eol
     }
 
-    /// Large files are read-only.
+    /// Large files are read-only, and so are files with bytes their
+    /// encoding cannot hold: saving them back would change those bytes.
     pub fn read_only(&self) -> bool {
-        self.large
+        self.large || self.lossy
     }
 
     /// Word wrap may be on (it is always off for Large files).
@@ -347,7 +360,9 @@ impl Tab {
 
     /// The status bar's left-slot note for this Tab.
     pub fn status_note(&self) -> Option<StatusNote> {
-        if self.large {
+        if self.lossy {
+            Some(StatusNote::InvalidBytes)
+        } else if self.large {
             Some(StatusNote::ReadOnly)
         } else if self.view == View::Rendered {
             Some(StatusNote::RenderedView)
@@ -520,7 +535,9 @@ impl Tabs {
         tab.missing_since = None;
         tab.text_len = file.text_len;
         tab.large = textfile::is_large(file.stat.size);
+        tab.lossy = file.lossy;
         tab.edited = false;
+        tab.chosen = false;
         // A change reported while loading, and not in what was read.
         let raced = tab
             .seen_while_loading
@@ -702,13 +719,47 @@ impl Tabs {
     }
 
     /// Writes the Tab to its file; an Untitled tab goes through Save As.
+    /// A lossy Tab never overwrites its file: it flashes why instead.
     pub fn save(&mut self, id: TabId) -> Vec<Action> {
         let Some(tab) = self.get(id) else {
             return Vec::new();
         };
         match &tab.path {
+            Some(_) if tab.lossy => self.refuse_lossy_save(id),
             Some(path) => vec![tab.write(path.clone())],
             None => self.save_as(id),
+        }
+    }
+
+    fn refuse_lossy_save(&mut self, id: TabId) -> Vec<Action> {
+        self.save_failed(id);
+        vec![Action::Flash(StatusNote::InvalidBytes)]
+    }
+
+    /// The Tab's text is back at its save point (Scintilla's
+    /// `SCN_SAVEPOINTREACHED`, after undo or redo): the edits are gone. An
+    /// encoding or line-ending choice, or a deleted file, still needs saving.
+    pub fn save_point_reached(&mut self, id: TabId) -> Vec<Action> {
+        self.set_edited(id, false)
+    }
+
+    /// The Tab's text left its save point (`SCN_SAVEPOINTLEFT`).
+    pub fn save_point_left(&mut self, id: TabId) -> Vec<Action> {
+        self.set_edited(id, true)
+    }
+
+    fn set_edited(&mut self, id: TabId, edited: bool) -> Vec<Action> {
+        match self.tab_mut(id) {
+            Some(tab) if !tab.read_only() => {
+                let before = tab.unsaved();
+                tab.edited = edited;
+                if tab.unsaved() == before {
+                    Vec::new()
+                } else {
+                    vec![Action::Changed(id)]
+                }
+            }
+            _ => Vec::new(),
         }
     }
 
@@ -752,6 +803,7 @@ impl Tabs {
                 self.save_failed(id);
                 vec![Action::OpenInAnotherTab { name }]
             }
+            None if tab.lossy && tab.is_at(&path) => self.refuse_lossy_save(id),
             None => vec![tab.write(path)],
         }
     }
@@ -774,6 +826,7 @@ impl Tabs {
         }
         tab.loaded = true;
         tab.edited = false;
+        tab.chosen = false;
         tab.missing = false;
         tab.missing_since = None;
         tab.loaded_stat = Some(stat);
@@ -901,7 +954,7 @@ impl Tabs {
             return Vec::new();
         }
         tab.eol = eol;
-        tab.edited = true;
+        tab.chosen = true;
         vec![Action::ConvertEol { id, eol }, Action::Changed(id)]
     }
 
@@ -915,7 +968,7 @@ impl Tabs {
             return Vec::new();
         }
         tab.encoding = encoding;
-        tab.edited = true;
+        tab.chosen = true;
         vec![Action::Changed(id)]
     }
 
@@ -1045,6 +1098,8 @@ impl Tabs {
             untitled_number,
             document: None,
             edited: false,
+            chosen: false,
+            lossy: false,
             missing: false,
             view: View::Source,
             notice: None,
