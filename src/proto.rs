@@ -60,6 +60,9 @@ pub const TIMER_SPELL: usize = 3;
 pub const SPELL_MS: u32 = 200;
 /// Prefs are written after the Window has been still for a moment (SCRIVI-23).
 pub const TIMER_PREFS: usize = 0x20;
+/// The find bar's matches are found again once typing in the document pauses.
+pub const TIMER_FIND: usize = 0x30;
+pub const FIND_MS: u32 = 150;
 
 // Internal resident messages: every WM_APP + n goes here.
 

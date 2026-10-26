@@ -74,15 +74,12 @@ pub fn apply_view(a: &App) {
     a.editor.call(SCI_SETZOOM, zoom as usize, 0);
 }
 
-/// The remembered word wrap, for 12's View › Word wrap.
-// 12: call this where the shown Tab's wrap is applied, and `set_wrap` on Alt+Z.
-#[allow(dead_code)]
+/// The remembered word wrap (View › Word wrap, `findview`).
 pub fn wrap() -> bool {
     with(|s| s.prefs.wrap)
 }
 
 /// Remember a change of word wrap.
-#[allow(dead_code)]
 pub fn set_wrap(a: &App, wrap: bool) {
     with(|s| s.prefs.wrap = wrap);
     arm(a.hwnd);

@@ -16,7 +16,9 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 };
 use windows::Win32::UI::WindowsAndMessaging::*;
 
-use super::{app, cmd, command, files, invalidate, recent, rehover, wide, App};
+use super::findview::Zoom;
+use super::{app, cmd, command, files, find, findview, invalidate, recent, rehover, wide, App};
+use crate::chrome::findbar::Mode as BarMode;
 use crate::chrome::Hit;
 use crate::editor::sci;
 use crate::tabs::{Action, TabId, Tabs};
@@ -38,6 +40,9 @@ pub struct State {
     pub markdown: bool,
     /// The Rendered view shows: the hidden source is not the user's to edit.
     pub rendered: bool,
+    /// View › Word wrap: on, and whether the Tab allows it (a Large file doesn't).
+    pub wrap: bool,
+    pub wrap_allowed: bool,
 }
 
 /// One line of a popup, ready to show.
@@ -58,11 +63,6 @@ pub enum Entry {
 
 fn always(_: &State) -> bool {
     true
-}
-
-/// Waits for a later ticket (12, 13): shown greyed.
-fn later(_: &State) -> bool {
-    false
 }
 
 fn writable(s: &State) -> bool {
@@ -93,18 +93,18 @@ pub const EDIT: &[Entry] = &[
     Entry::Command { label: "&Paste", keys: "Ctrl+V", id: cmd::PASTE, enabled: |s| s.can_paste && !s.read_only && !s.rendered },
     Entry::Command { label: "Select &all", keys: "Ctrl+A", id: cmd::SELECT_ALL, enabled: |s| !s.rendered },
     Entry::Separator,
-    Entry::Command { label: "&Find\u{2026}", keys: "Ctrl+F", id: cmd::FIND, enabled: later },
-    Entry::Command { label: "R&eplace\u{2026}", keys: "Ctrl+H", id: cmd::REPLACE, enabled: later },
-    Entry::Command { label: "&Go to line\u{2026}", keys: "Ctrl+G", id: cmd::GO_TO_LINE, enabled: later },
+    Entry::Command { label: "&Find\u{2026}", keys: "Ctrl+F", id: cmd::FIND, enabled: always },
+    Entry::Command { label: "R&eplace\u{2026}", keys: "Ctrl+H", id: cmd::REPLACE, enabled: always },
+    Entry::Command { label: "&Go to line\u{2026}", keys: "Ctrl+G", id: cmd::GO_TO_LINE, enabled: always },
 ];
 
 pub const VIEW: &[Entry] = &[
     Entry::Command { label: "&Rendered view", keys: "Ctrl+E", id: cmd::RENDERED_VIEW, enabled: |s| s.markdown },
-    Entry::Command { label: "&Word wrap", keys: "Alt+Z", id: cmd::WORD_WRAP, enabled: later },
+    Entry::Command { label: "&Word wrap", keys: "Alt+Z", id: cmd::WORD_WRAP, enabled: |s| s.wrap_allowed },
     Entry::Separator,
-    Entry::Command { label: "Zoom &in", keys: "Ctrl++", id: cmd::ZOOM_IN, enabled: later },
-    Entry::Command { label: "Zoom &out", keys: "Ctrl+\u{2212}", id: cmd::ZOOM_OUT, enabled: later },
-    Entry::Command { label: "Reset &zoom", keys: "Ctrl+0", id: cmd::ZOOM_RESET, enabled: later },
+    Entry::Command { label: "Zoom &in", keys: "Ctrl++", id: cmd::ZOOM_IN, enabled: always },
+    Entry::Command { label: "Zoom &out", keys: "Ctrl+\u{2212}", id: cmd::ZOOM_OUT, enabled: always },
+    Entry::Command { label: "Reset &zoom", keys: "Ctrl+0", id: cmd::ZOOM_RESET, enabled: always },
 ];
 
 /// File, Edit, View, in the order of their buttons.
@@ -124,7 +124,8 @@ pub fn items(entries: &[Entry], state: &State) -> Vec<Item> {
                 label: if keys.is_empty() { label.to_string() } else { format!("{label}\t{keys}") },
                 id: *id,
                 enabled: enabled(state),
-                checked: false,
+                // Word wrap is the one check mark; the others are radio choices.
+                checked: *id == cmd::WORD_WRAP && state.wrap && state.wrap_allowed,
             },
             Entry::Sub { label, enabled, items } => {
                 Item::Sub { label: label.to_string(), enabled: enabled(state), items: items(state) }
@@ -608,7 +609,7 @@ fn build(items: &[Item]) -> Option<HMENU> {
                     let mut info = MENUITEMINFOW {
                         cbSize: std::mem::size_of::<MENUITEMINFOW>() as u32,
                         fMask: MIIM_ID | MIIM_STRING | MIIM_STATE | MIIM_FTYPE,
-                        fType: if *checked { MFT_RADIOCHECK } else { MFT_STRING },
+                        fType: if *checked && *id != cmd::WORD_WRAP { MFT_RADIOCHECK } else { MFT_STRING },
                         fState: state_flags(*enabled, *checked),
                         wID: *id as u32,
                         dwTypeData: PWSTR(label.as_ptr() as *mut u16),
@@ -664,6 +665,7 @@ fn state_of(a: &App) -> State {
             (t.encoding(), t.eol(), read_only, t.is_untitled(), t.kind() == crate::tabs::Kind::Markdown, rendered)
         })
     };
+    let wrap_allowed = findview::wrap_allowed(a);
     let (encoding, eol, read_only, untitled, markdown, rendered) =
         tab.unwrap_or((NEW_FILE.0, NEW_FILE.1, false, true, true, false));
     let ask = |msg| editor_call(a, msg) != 0;
@@ -678,6 +680,8 @@ fn state_of(a: &App) -> State {
         can_paste: ask(sci::SCI_CANPASTE),
         markdown,
         rendered,
+        wrap: findview::wrap_wanted(),
+        wrap_allowed,
     }
 }
 
@@ -722,10 +726,14 @@ pub fn run(a: &App, id: u16) -> bool {
             let eol = Eol::MENU[(id - cmd::EOL) as usize];
             on_active(&|t, tab| t.set_eol(tab, eol));
         }
-        // 12 wires these; their items are greyed until then. (13's
-        // RENDERED_VIEW is routed by `app` before the menus.)
-        cmd::FIND | cmd::REPLACE | cmd::GO_TO_LINE => {}
-        cmd::WORD_WRAP | cmd::ZOOM_IN | cmd::ZOOM_OUT | cmd::ZOOM_RESET => {}
+        cmd::FIND => find::open(a, BarMode::Find),
+        cmd::REPLACE => find::open(a, BarMode::Replace),
+        cmd::GO_TO_LINE => find::open(a, BarMode::Goto),
+        cmd::WORD_WRAP => findview::toggle_wrap(a),
+        cmd::ZOOM_IN => findview::zoom(a, Zoom::In),
+        cmd::ZOOM_OUT => findview::zoom(a, Zoom::Out),
+        cmd::ZOOM_RESET => findview::zoom(a, Zoom::Reset),
+        // 13's RENDERED_VIEW is routed by `app` before the menus.
         _ if recent::is_command(id) => recent::open(a, id),
         _ => return false,
     }
