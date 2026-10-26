@@ -436,7 +436,7 @@ fn draw_tabs(p: &Pass, v: &View) -> Result<()> {
         if tab.right <= l.strip.left || tab.left >= l.strip.right {
             continue;
         }
-        let hovered = matches!(v.hover, Some(Hit::Tab(n) | Hit::TabClose(n)) if n == i);
+        let hovered = v.hover.and_then(Hit::tab) == Some(i);
         if t.active {
             // One pixel taller than an inactive tab, covering the row's hairline.
             let shape = Rect { top: tab.top - p.px(1.0), ..*tab };

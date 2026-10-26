@@ -49,7 +49,7 @@ use crate::editor::{sci, Caret, Editor, NotifyHeader, ViewState};
 use crate::launch::{self, Request};
 use crate::proto::{CLASS, COPYDATA_REQUEST, ICON, WM_EDITOR_DPI, WM_HANDOFF};
 use crate::tabs::{Action, CloseReply, EditorDoc, FileStat, LoadedFile, StatusNote, Tab, TabId, Tabs};
-use crate::textfile::{self, Encoding};
+use crate::textfile::{self, Encoding, Eol};
 
 /// First size of the Window, in DIPs, before prefs (09) remembers one.
 const START_W: f32 = 1100.0;
@@ -116,6 +116,8 @@ struct App {
     shown: Cell<Option<TabId>>,
     /// Set while scrivi itself changes a document's text: that is no edit.
     quiet: Cell<bool>,
+    /// The line ending, read-only state and wrap last sent for the shown Tab.
+    applied: Cell<Option<(Eol, bool, bool)>>,
     /// Pending `Action::Recheck`s: timer id and path.
     rechecks: RefCell<Vec<(usize, PathBuf)>>,
     next_timer: Cell<usize>,
@@ -238,6 +240,7 @@ pub fn run(initial: Request) -> i32 {
             views: RefCell::new(HashMap::new()),
             shown: Cell::new(None),
             quiet: Cell::new(false),
+            applied: Cell::new(None),
             rechecks: RefCell::new(Vec::new()),
             next_timer: Cell::new(FIRST_RECHECK_TIMER),
             closing: Cell::new(false),
@@ -506,19 +509,24 @@ fn show(a: &App, id: TabId) {
     stash_view(a);
     a.editor.show_document(doc);
     a.shown.set(Some(id));
+    // Another document: its line ending and read-only state start afresh.
+    a.applied.set(None);
     apply_settings(a, id);
     let view = a.views.borrow().get(&id).copied().unwrap_or_default();
     a.editor.restore_view(&view);
     refresh_status(a);
 }
 
-/// The shown Tab's line ending, read-only state and wrap.
+/// The shown Tab's line ending, read-only state and wrap. Only a change is
+/// sent: `Changed` can arrive from inside Scintilla's own SCN_MODIFIED.
 fn apply_settings(a: &App, id: TabId) {
-    let Some((eol, read_only, wrap)) =
-        a.tabs.borrow().get(id).map(|t| (t.eol(), t.read_only(), t.wrap_allowed()))
-    else {
+    let Some(settings) = a.tabs.borrow().get(id).map(|t| (t.eol(), t.read_only(), t.wrap_allowed())) else {
         return;
     };
+    if a.applied.replace(Some(settings)) == Some(settings) {
+        return;
+    }
+    let (eol, read_only, wrap) = settings;
     a.editor.set_eol_mode(eol);
     a.editor.set_read_only(read_only);
     // 12: Alt+Z and the remembered choice; until then wrap is on where allowed.
@@ -529,22 +537,26 @@ fn apply_settings(a: &App, id: TabId) {
 fn with_document(a: &App, doc: isize, f: impl FnOnce(&Editor)) {
     stash_view(a);
     let shown = a.shown.take();
-    a.quiet.set(true);
-    a.editor.show_document(doc);
-    f(&a.editor);
-    a.quiet.set(false);
+    quietly(a, |e| {
+        e.show_document(doc);
+        f(e);
+    });
     if let Some(id) = shown {
         show(a, id);
     }
 }
 
+/// Run `f`, whose text changes are scrivi's own, not edits.
+fn quietly(a: &App, f: impl FnOnce(&Editor)) {
+    a.quiet.set(true);
+    f(&a.editor);
+    a.quiet.set(false);
+}
+
 /// Run `f` on Tab `id`'s document, shown or not.
 fn in_document(a: &App, id: TabId, f: impl FnOnce(&Editor)) {
     if a.shown.get() == Some(id) {
-        a.quiet.set(true);
-        f(&a.editor);
-        a.quiet.set(false);
-        return;
+        return quietly(a, f);
     }
     let Some(EditorDoc(doc)) = a.tabs.borrow().get(id).and_then(Tab::document) else { return };
     with_document(a, doc, f);
@@ -556,10 +568,12 @@ fn load(a: &App, id: TabId, path: &Path, encoding: Option<Encoding>, keep_caret_
         Ok(read) => read,
         Err(e) => {
             // A reread that fails keeps the text; only a Tab that never showed it says why.
-            if a.tabs.borrow().get(id).is_some_and(|t| t.document().is_none()) {
+            let first = a.tabs.borrow().get(id).is_some_and(|t| t.document().is_none());
+            // The outcome goes in before the message box pumps messages.
+            command(a, |t| t.load_failed(id));
+            if first {
                 message(a, &format!("Couldn't open {}.\n\n{e}", path.display()));
             }
-            command(a, |t| t.load_failed(id));
             return;
         }
     };
@@ -612,8 +626,9 @@ fn stat_of(path: &Path) -> Option<FileStat> {
 /// 08: saving. Until then a save writes nothing and calls off any close
 /// waiting on it, so no text is ever lost.
 fn save_stub(a: &App, id: TabId) {
-    message(a, "Saving isn't in this build yet: nothing was written.");
+    // The outcome goes in before the message box pumps messages.
     command(a, |t| t.save_failed(id));
+    message(a, "Saving isn't in this build yet: nothing was written.");
 }
 
 /// A two-choice question with Cancel (spec §8): `save` / `discard` / Cancel.
@@ -869,11 +884,7 @@ fn set_hover(a: &App, hover: Option<Hit>) {
 fn update_tip(a: &App) {
     let (tip, rect) = {
         let ui = a.ui.borrow();
-        let at = match ui.hover {
-            Some(Hit::Tab(i) | Hit::TabClose(i)) => Some(i),
-            _ => None,
-        };
-        let tip = at.and_then(|i| tab_at(a, i).map(|id| (id, i)));
+        let tip = ui.hover.and_then(Hit::tab).and_then(|i| tab_at(a, i).map(|id| (id, i)));
         let rect = tip.map_or(RECT::default(), |(_, i)| {
             let (t, s) = (ui.layout.tabs[i], ui.layout.strip);
             RECT { left: t.left.max(s.left), top: t.top, right: t.right.min(s.right), bottom: t.bottom }
@@ -1097,11 +1108,8 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             }
             WM_MBUTTONDOWN | WM_MBUTTONUP => {
                 let (x, y) = xy(lp);
-                let under = match a.ui.borrow().layout.hit_test(x, y) {
-                    Hit::Tab(i) | Hit::TabClose(i) => Some(i),
-                    _ => None,
-                };
-                let under = under.and_then(|i| tab_at(a, i));
+                let hit = a.ui.borrow().layout.hit_test(x, y);
+                let under = hit.tab().and_then(|i| tab_at(a, i));
                 if msg == WM_MBUTTONDOWN {
                     a.ui.borrow_mut().middle = under;
                     return LRESULT(0);

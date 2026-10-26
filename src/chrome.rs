@@ -141,6 +141,14 @@ impl Hit {
         [Hit::Minimize, Hit::Maximize, Hit::Close].into_iter().find(|h| h.nc_code() == code)
     }
 
+    /// The Tab this piece belongs to: the Tab itself or its ×.
+    pub fn tab(self) -> Option<usize> {
+        match self {
+            Hit::Tab(i) | Hit::TabClose(i) => Some(i),
+            _ => None,
+        }
+    }
+
     /// Whether hovering this piece highlights it: only what can be clicked.
     pub fn lights_up(self) -> bool {
         matches!(
@@ -687,6 +695,13 @@ mod tests {
         assert_eq!(l.hit_test(770, 11), Hit::Caption);
         assert!(Hit::ScrollLeft.lights_up() && Hit::ScrollRight.lights_up());
         assert_eq!(Hit::ScrollRight.nc_code(), 1);
+    }
+
+    #[test]
+    fn a_tab_and_its_close_button_name_the_same_tab() {
+        assert_eq!(Hit::Tab(3).tab(), Some(3));
+        assert_eq!(Hit::TabClose(3).tab(), Some(3));
+        assert_eq!(Hit::NewTab.tab(), None);
     }
 
     #[test]
