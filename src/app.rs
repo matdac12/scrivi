@@ -397,7 +397,7 @@ pub fn on_handoff(request: Request) {
     let Some(a) = app() else { return };
     match request {
         Request::NewTab => command(a, Tabs::new_untitled),
-        Request::Open(paths) => command(a, |t| t.open(&paths)),
+        Request::Open(paths) => files::open_paths(a, &paths),
     }
     #[cfg(debug_assertions)]
     log_tabs(a);
@@ -689,7 +689,8 @@ fn load(a: &App, id: TabId, path: &Path, encoding: Option<Encoding>, keep_caret_
         show(a, id);
     }
     let (encoding, eol, lossy) = (decoded.encoding, decoded.eol, decoded.lossy);
-    let file = LoadedFile { encoding, eol, stat, text_len: decoded.text.len(), lossy };
+    let file_id = files::file_id(path);
+    let file = LoadedFile { encoding, eol, stat, file_id, text_len: decoded.text.len(), lossy };
     command(a, |t| t.loaded(id, file));
     // The Tab now knows its size: style it, or leave it plain over 1 MB.
     restyle(a);
@@ -1400,6 +1401,10 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                 } else {
                     DefWindowProcW(hwnd, msg, wp, lp)
                 }
+            }
+            WM_ENTERMENULOOP => {
+                menu::loop_entered(a);
+                LRESULT(0)
             }
             WM_MENUSELECT => {
                 menu::selected(wp, lp);

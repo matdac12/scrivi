@@ -128,6 +128,15 @@ pub struct FileStat {
     pub modified: SystemTime,
 }
 
+/// Which file a path leads to, whatever the path says: the volume serial and
+/// file index `GetFileInformationByHandle` reports. Two paths with the same
+/// identity (a junction, a symlink, a hard link, a short name) are one file.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FileId {
+    pub volume: u32,
+    pub index: u64,
+}
+
 /// What `app` found when it performed an [`Action::Load`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct LoadedFile {
@@ -136,6 +145,8 @@ pub struct LoadedFile {
     pub eol: Eol,
     /// The file as it was when read.
     pub stat: FileStat,
+    /// The file's identity, if `app` could read it.
+    pub file_id: Option<FileId>,
     /// Length of the text in the editor document, in bytes.
     pub text_len: usize,
     /// Some bytes were not valid in `encoding` (`textfile::Decoded::lossy`).
@@ -256,6 +267,8 @@ pub struct Tab {
     /// The file as the Tab's text came from it: the last load or save.
     /// Only `loaded` and `saved` move it.
     loaded_stat: Option<FileStat>,
+    /// The identity of the file the Tab last loaded or saved.
+    file_id: Option<FileId>,
     /// The latest file state the Tab acted on (reloaded for, or showed a
     /// Notice for), so a repeated event does not act twice.
     seen: Option<FileStat>,
@@ -436,7 +449,15 @@ impl Tab {
     }
 
     fn is_at(&self, path: &Path) -> bool {
-        self.path.as_deref().is_some_and(|p| same_path(p, path))
+        self.is_at_id(path, None)
+    }
+
+    /// On `path`, or on the file with identity `id`: two paths to one file
+    /// (a junction, an alias) count as one. The path still matches when the
+    /// identities differ, since a replaced file gets a new one.
+    fn is_at_id(&self, path: &Path, id: Option<FileId>) -> bool {
+        let same_file = matches!((self.file_id, id), (Some(a), Some(b)) if a == b);
+        same_file || self.path.as_deref().is_some_and(|p| same_path(p, path))
     }
 }
 
@@ -488,10 +509,17 @@ impl Tabs {
     /// has it. The last path's Tab is shown. Every opened file moves to the
     /// top of the recent files (a new Tab's once it has loaded).
     pub fn open(&mut self, paths: &[PathBuf]) -> Vec<Action> {
+        let paths: Vec<_> = paths.iter().map(|p| (p.clone(), None)).collect();
+        self.open_with_ids(&paths)
+    }
+
+    /// [`Tabs::open`], with each file's identity where `app` could read it,
+    /// so a second path to an open file switches to its Tab.
+    pub fn open_with_ids(&mut self, paths: &[(PathBuf, Option<FileId>)]) -> Vec<Action> {
         let mut actions = Vec::new();
-        for (i, path) in paths.iter().enumerate() {
+        for (i, (path, file_id)) in paths.iter().enumerate() {
             let last = i + 1 == paths.len();
-            if let Some(tab) = self.tabs.iter().find(|t| t.is_at(path)) {
+            if let Some(tab) = self.tabs.iter().find(|t| t.is_at_id(path, *file_id)) {
                 let (id, loaded) = (tab.id, tab.loaded);
                 let known = tab.path.clone();
                 if !loaded {
@@ -535,6 +563,7 @@ impl Tabs {
         tab.encoding = file.encoding;
         tab.eol = file.eol;
         tab.loaded_stat = Some(file.stat);
+        tab.file_id = file.file_id;
         tab.seen = Some(file.stat);
         tab.missing = false;
         tab.missing_since = None;
@@ -798,17 +827,24 @@ impl Tabs {
     /// A file open in another Tab is refused: both Tabs stay as they are,
     /// and a close waiting on this save is called off.
     pub fn save_as_chosen(&mut self, id: TabId, path: PathBuf) -> Vec<Action> {
+        self.save_as_chosen_with_id(id, path, None)
+    }
+
+    /// [`Tabs::save_as_chosen`], with the chosen file's identity if it exists
+    /// and `app` could read it: an alias of an open file is refused too, and
+    /// an alias of a lossy Tab's own file is not overwritten.
+    pub fn save_as_chosen_with_id(&mut self, id: TabId, path: PathBuf, file_id: Option<FileId>) -> Vec<Action> {
         let Some(tab) = self.get(id) else {
             return Vec::new();
         };
-        let elsewhere = self.tabs.iter().find(|t| t.id != id && t.is_at(&path));
+        let elsewhere = self.tabs.iter().find(|t| t.id != id && t.is_at_id(&path, file_id));
         match elsewhere {
             Some(other) => {
                 let name = other.name();
                 self.save_failed(id);
                 vec![Action::OpenInAnotherTab { name }]
             }
-            None if tab.lossy && tab.is_at(&path) => self.refuse_lossy_save(id),
+            None if tab.lossy && tab.is_at_id(&path, file_id) => self.refuse_lossy_save(id),
             None => vec![tab.write(path)],
         }
     }
@@ -817,6 +853,18 @@ impl Tabs {
     /// and found `stat` there afterwards, at `now`. The extension decides
     /// the kind from here on.
     pub fn saved(&mut self, id: TabId, path: PathBuf, stat: FileStat, now: Instant) -> Vec<Action> {
+        self.saved_with_id(id, path, stat, None, now)
+    }
+
+    /// [`Tabs::saved`], with the written file's identity if `app` read it.
+    pub fn saved_with_id(
+        &mut self,
+        id: TabId,
+        path: PathBuf,
+        stat: FileStat,
+        file_id: Option<FileId>,
+        now: Instant,
+    ) -> Vec<Action> {
         let mut actions = Vec::new();
         let Some(tab) = self.tab_mut(id) else {
             return actions;
@@ -837,6 +885,7 @@ impl Tabs {
         tab.missing = false;
         tab.missing_since = None;
         tab.loaded_stat = Some(stat);
+        tab.file_id = file_id;
         tab.seen = Some(stat);
         tab.own_save = Some(now);
         if matches!(tab.notice, Some(Notice::DiskChange | Notice::DeletedOnDisk)) {
@@ -1130,6 +1179,7 @@ impl Tabs {
             text_len: 0,
             loaded: false,
             loaded_stat: None,
+            file_id: None,
             seen: None,
             seen_while_loading: None,
             missing_since: None,

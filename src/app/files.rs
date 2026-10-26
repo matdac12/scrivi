@@ -31,7 +31,7 @@ use windows::Win32::UI::WindowsAndMessaging::SendMessageW;
 
 use super::{atomic, command, headless, in_document, message, wide, App};
 use crate::editor::{sci, Editor};
-use crate::tabs::{Action, FileStat, SaveAsDefault, SaveAsFolder, StatusNote, Tab, TabId};
+use crate::tabs::{Action, FileId, FileStat, SaveAsDefault, SaveAsFolder, StatusNote, Tab, TabId};
 use crate::textfile::{self, Encoding, Eol};
 
 /// A Scintilla message with no arguments.
@@ -70,6 +70,18 @@ fn path_of(item: &IShellItem) -> Option<PathBuf> {
     }
 }
 
+/// The identity of the file at `path`, for `tabs` to tell two paths to one
+/// file apart from two files. `None` if it can't be read (a new file).
+pub fn file_id(path: &Path) -> Option<FileId> {
+    atomic::file_info(path).and_then(|i| i.id)
+}
+
+/// Open each path in a Tab, or switch to the Tab already on that file.
+pub fn open_paths(a: &App, paths: &[PathBuf]) {
+    let with_ids: Vec<_> = paths.iter().map(|p| (p.clone(), file_id(p))).collect();
+    command(a, |t| t.open_with_ids(&with_ids));
+}
+
 /// File › Open… (Ctrl+O): pick one or more files, each opens in a Tab.
 pub fn open(a: &App) {
     if headless() {
@@ -77,7 +89,7 @@ pub fn open(a: &App) {
     }
     let Some(paths) = pick_files(a) else { return };
     if !paths.is_empty() {
-        command(a, |t| t.open(&paths));
+        open_paths(a, &paths);
     }
 }
 
@@ -108,7 +120,10 @@ fn pick_files(a: &App) -> Option<Vec<PathBuf>> {
 /// `Action::AskSaveAs`: the Save As dialog, starting at `default`.
 pub fn ask_save_as(a: &App, id: TabId, default: &SaveAsDefault) {
     match pick_save_path(a, default) {
-        Some(path) => command(a, |t| t.save_as_chosen(id, path)),
+        Some(path) => {
+            let file_id = file_id(&path);
+            command(a, |t| t.save_as_chosen_with_id(id, path, file_id));
+        }
         None => command(a, |t| t.save_failed(id)),
     }
 }
@@ -217,7 +232,8 @@ pub fn write(a: &App, id: TabId, path: &Path, encoding: Encoding, eol: Eol) {
             in_document(a, id, |e| {
                 send(e, sci::SCI_SETSAVEPOINT);
             });
-            command(a, |t| t.saved(id, path.to_path_buf(), stat, Instant::now()));
+            let file_id = file_id(path);
+            command(a, |t| t.saved_with_id(id, path.to_path_buf(), stat, file_id, Instant::now()));
             if written == atomic::Written::InPlace {
                 command(a, |_| vec![Action::Flash(StatusNote::SavedInPlace)]);
             }
@@ -356,7 +372,7 @@ pub fn dropped(a: &App, drop: HDROP) {
     // Folders have no text.
     let files: Vec<PathBuf> = paths.into_iter().filter(|p| !p.is_dir()).collect();
     if !files.is_empty() {
-        command(a, |t| t.open(&files));
+        open_paths(a, &files);
     }
 }
 
