@@ -33,6 +33,7 @@ fn file(size: u64) -> LoadedFile {
         encoding: Encoding::Utf8,
         eol: Eol::Lf,
         stat: stat(size, 100),
+        file_id: None,
         text_len: size as usize,
         lossy: false,
     }
@@ -1183,6 +1184,83 @@ fn the_save_point_of_a_read_only_tab_is_ignored() {
     let id = open_sized(&mut tabs, r"C:\large.log", LARGE_FILE_BYTES + 1);
     assert_eq!(tabs.save_point_left(id), []);
     assert!(!tabs.get(id).unwrap().unsaved());
+}
+
+// --- File identity (SCRIVI-16) ------------------------------------------------
+
+fn id_of(index: u64) -> Option<FileId> {
+    Some(FileId { volume: 7, index })
+}
+
+fn open_with_id(tabs: &mut Tabs, p: &str, file_id: Option<FileId>, lossy: bool) -> TabId {
+    let id = added(&tabs.open(&[path(p)]));
+    tabs.loaded(id, LoadedFile { file_id, lossy, ..file(10) });
+    id
+}
+
+fn loads(actions: &[Action]) -> bool {
+    actions.iter().any(|a| matches!(a, Action::Load { .. }))
+}
+
+#[test]
+fn opening_an_alias_of_an_open_file_switches_to_its_tab() {
+    let mut tabs = Tabs::new();
+    let first = open_with_id(&mut tabs, r"C:\real\a.md", id_of(5), false);
+    open_with_id(&mut tabs, r"C:\other.md", id_of(6), false);
+    let actions = tabs.open_with_ids(&[(path(r"C:\junction\a.md"), id_of(5))]);
+    assert!(actions.contains(&Action::Activate(first)), "{actions:?}");
+    assert!(!loads(&actions));
+    assert_eq!(tabs.iter().count(), 2);
+}
+
+#[test]
+fn opening_a_different_file_with_a_different_identity_adds_a_tab() {
+    let mut tabs = Tabs::new();
+    open_with_id(&mut tabs, r"C:\a.md", id_of(5), false);
+    assert!(loads(&tabs.open_with_ids(&[(path(r"C:\b.md"), id_of(6))])));
+}
+
+#[test]
+fn save_as_onto_an_alias_of_an_open_tabs_file_is_refused() {
+    let mut tabs = Tabs::new();
+    let other = open_with_id(&mut tabs, r"C:\real\a.md", id_of(5), false);
+    let id = edited_untitled(&mut tabs);
+    assert_eq!(
+        tabs.save_as_chosen_with_id(id, path(r"C:\junction\a.md"), id_of(5)),
+        [Action::OpenInAnotherTab { name: "a.md".into() }]
+    );
+    assert_eq!(tabs.get(other).unwrap().notice(), None);
+}
+
+#[test]
+fn save_as_onto_an_alias_of_a_lossy_tabs_own_file_is_refused() {
+    let mut tabs = Tabs::new();
+    let id = open_with_id(&mut tabs, r"C:\real\odd.txt", id_of(5), true);
+    let actions = tabs.save_as_chosen_with_id(id, path(r"C:\junction\odd.txt"), id_of(5));
+    assert!(!actions.iter().any(|a| matches!(a, Action::Write { .. })), "{actions:?}");
+}
+
+#[test]
+fn the_same_path_still_matches_when_the_identity_changed() {
+    // A replaced file (an editor's save) gets a new index.
+    let mut tabs = Tabs::new();
+    open_with_id(&mut tabs, r"C:\a.md", id_of(5), false);
+    assert!(!loads(&tabs.open_with_ids(&[(path(r"c:\A.md"), id_of(9))])));
+}
+
+#[test]
+fn without_an_identity_paths_compare_by_normalised_string() {
+    let mut tabs = Tabs::new();
+    open_with_id(&mut tabs, r"C:\a.md", id_of(5), false);
+    assert!(!loads(&tabs.open_with_ids(&[(path("c:/A.MD"), None)])));
+}
+
+#[test]
+fn a_saved_tab_remembers_the_identity_of_the_file_it_wrote() {
+    let mut tabs = Tabs::new();
+    let id = edited_untitled(&mut tabs);
+    tabs.saved_with_id(id, path(r"C:\new.md"), stat(5, 1), id_of(8), t0());
+    assert!(!loads(&tabs.open_with_ids(&[(path(r"C:\alias\new.md"), id_of(8))])));
 }
 
 // --- §7 Bytes the encoding cannot hold (SCRIVI-16) -------------------------

@@ -271,6 +271,10 @@ struct Tracking {
     /// Where the mouse last was: only a move away from it switches menus,
     /// not the move Windows reports when a popup opens under a resting mouse.
     mouse: POINT,
+    /// Opened from the keyboard: select the first item once the menu loop
+    /// runs. Posting the key earlier would reach the editor if the popup
+    /// never opened.
+    select_first: bool,
 }
 
 thread_local! {
@@ -469,13 +473,10 @@ fn track(a: &App, at: usize, keyboard: bool) -> (u16, Option<Tracking>) {
             next: None,
             escaped: false,
             mouse: cursor(),
+            select_first: keyboard,
         })
     });
     let chosen = unsafe {
-        // Opened from the keyboard, a native menu bar selects the first item.
-        if keyboard {
-            let _ = PostMessageW(Some(a.hwnd), WM_KEYDOWN, WPARAM(VK_DOWN.0 as usize), LPARAM(0));
-        }
         let hook = SetWindowsHookExW(WH_MSGFILTER, Some(filter), None, GetCurrentThreadId()).ok();
         let flags = TPM_LEFTALIGN | TPM_TOPALIGN | TPM_VERTICAL | TPM_RETURNCMD;
         let chosen = TrackPopupMenuEx(menu, flags.0, corners[0].x, corners[1].y, a.hwnd, Some(&params)).0;
@@ -486,6 +487,17 @@ fn track(a: &App, at: usize, keyboard: bool) -> (u16, Option<Tracking>) {
         chosen
     };
     (chosen as u16, TRACKING.with(|t| t.borrow_mut().take()))
+}
+
+/// `WM_ENTERMENULOOP`: the popup is open. Opened from the keyboard, a native
+/// menu bar selects the first item, so send the key now and not before.
+pub fn loop_entered(a: &App) {
+    let first = TRACKING.with(|t| t.borrow_mut().as_mut().is_some_and(|t| std::mem::take(&mut t.select_first)));
+    if first {
+        unsafe {
+            let _ = PostMessageW(Some(a.hwnd), WM_KEYDOWN, WPARAM(VK_DOWN.0 as usize), LPARAM(0));
+        }
+    }
 }
 
 /// `WM_MENUSELECT`: keep track of where the selection is, for Left and Right.
