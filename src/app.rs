@@ -48,7 +48,8 @@ use crate::chrome::{Frame, Hit, Layout, Painter, Rect, Status, TabView, View};
 use crate::editor::{sci, Caret, Editor, NotifyHeader, ViewState};
 use crate::launch::{self, Request};
 use crate::mdview::{self, Applied};
-use crate::proto::{self, COPYDATA_REQUEST, ICON, RESTYLE_MS, TIMER_RESTYLE, WM_EDITOR_DPI, WM_HANDOFF};
+use crate::proto::{self, COPYDATA_REQUEST, ICON, RESTYLE_MS, SPELL_MS, TIMER_RESTYLE, TIMER_SPELL, WM_EDITOR_DPI, WM_HANDOFF};
+use crate::spellview::SpellView;
 use crate::tabs::{Action, CloseReply, EditorDoc, FileStat, LoadedFile, StatusNote, Tab, TabId, Tabs};
 use crate::textfile::{self, Encoding, Eol};
 
@@ -152,6 +153,8 @@ struct App {
     applied: Cell<Option<(Eol, bool, bool)>>,
     /// The Tabs whose documents hold markdown styles.
     styled: RefCell<Applied<TabId>>,
+    /// Spell check: the checkers and the squiggles of the shown document.
+    spell: SpellView,
     /// Pending `Action::Recheck`s: timer id and path.
     rechecks: RefCell<Vec<(usize, PathBuf)>>,
     next_timer: Cell<usize>,
@@ -284,6 +287,7 @@ pub fn run(initial: Request) -> i32 {
             rechecks: RefCell::new(Vec::new()),
             next_timer: Cell::new(FIRST_RECHECK_TIMER),
             styled: RefCell::default(),
+            spell: SpellView::new(),
             closing: Cell::new(false),
         }));
         APP.with(|c| {
@@ -572,6 +576,21 @@ fn restyle(a: &App) {
     let wanted = a.tabs.borrow().get(id).is_some_and(Tab::styled);
     let plan = a.styled.borrow_mut().plan(id, wanted);
     mdview::run(&a.editor, plan);
+    arm_spell(a);
+}
+
+/// Spell check the shown Tab once things are quiet, after an edit, a scroll or a switch.
+fn arm_spell(a: &App) {
+    unsafe {
+        SetTimer(Some(a.hwnd), TIMER_SPELL, SPELL_MS, None);
+    }
+}
+
+/// Squiggle the shown Tab's flagged words, or clear them if it isn't spell checked.
+fn spellcheck(a: &App) {
+    let Some(id) = a.shown.get() else { return };
+    let wanted = a.tabs.borrow().get(id).is_some_and(Tab::spell_checked);
+    a.spell.run(&a.editor, wanted);
 }
 
 /// Restyle once typing pauses; each edit restarts the wait.
@@ -1235,6 +1254,8 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                 let _ = KillTimer(Some(hwnd), timer);
                 if timer == TIMER_RESTYLE {
                     restyle(a);
+                } else if timer == TIMER_SPELL {
+                    spellcheck(a);
                 } else if timer == FLASH_TIMER {
                     let status = {
                         let mut ui = a.ui.borrow_mut();
@@ -1320,7 +1341,12 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                         sci::SCN_SAVEPOINTREACHED | sci::SCN_SAVEPOINTLEFT if !a.quiet.get() => {
                             files::save_point(a, n.code == sci::SCN_SAVEPOINTLEFT)
                         }
-                        sci::SCN_UPDATEUI | sci::SCN_ZOOM => refresh_status(a),
+                        sci::SCN_UPDATEUI | sci::SCN_ZOOM => {
+                            refresh_status(a);
+                            if a.spell.scrolled_away(&a.editor) {
+                                arm_spell(a);
+                            }
+                        }
                         // Text typed, deleted, undone: the shown Tab is edited.
                         sci::SCN_MODIFIED if !a.quiet.get() => {
                             if let Some(id) = a.shown.get() {
@@ -1333,6 +1359,12 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                         _ => {}
                     }
                 }
+                LRESULT(0)
+            }
+            // The editor's own popup is off: right-click shows spell check's menu.
+            WM_CONTEXTMENU if wp.0 == a.editor.hwnd().0 as usize => {
+                let wanted = a.shown.get().is_some_and(|id| a.tabs.borrow().get(id).is_some_and(Tab::spell_checked));
+                a.spell.context_menu(&a.editor, hwnd, lp, wanted);
                 LRESULT(0)
             }
             WM_COPYDATA => {

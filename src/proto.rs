@@ -55,6 +55,9 @@ pub const COPYDATA_REQUEST: usize = 0x5343_5231;
 pub const TIMER_RESTYLE: usize = 2;
 /// Quiet time after an edit before markdown styling is redone.
 pub const RESTYLE_MS: u32 = 150;
+/// Spell check runs after this much quiet, after an edit or a scroll.
+pub const TIMER_SPELL: usize = 3;
+pub const SPELL_MS: u32 = 200;
 
 // Internal resident messages: every WM_APP + n goes here.
 
