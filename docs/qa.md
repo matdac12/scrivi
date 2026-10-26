@@ -5,8 +5,9 @@ order a person meets the app). Each box says **how** to check and **what to
 expect**. Tick it, or write the result next to it. Nothing here runs in CI:
 it needs a real desktop, a mouse and, for some items, a second monitor.
 
-Words follow `GLOSSARY.md`. Sample files: `tests/fixtures/` (and any `.md` file
-with an image, a heading and a link to it).
+Words follow `GLOSSARY.md`. Sample files: `tests/fixtures/` (the Rendered view
+one is `tests/fixtures/rendered/notes/notes.md`). Items marked *(record)* have
+no fixed expectation in the spec: write down what you see.
 
 ## Setup
 
@@ -23,203 +24,185 @@ with an image, a heading and a link to it).
 - [ ] **Pick scrivi** in Settings > Default apps for `.txt`, `.md` and `.log`
   (the per-extension results are recorded under *Registration*).
 - [ ] **First launch.** Double-click a `.txt` file.
-  - Expect: scrivi opens at once with the file in a Tab; no console window.
-
-## Window and title row (§4)
-
-- [ ] **One row.** Look at the top of the Window.
-  - Expect: one row: icon, File / Edit / View, the Tabs, the `+`, then minimize / maximize / close.
-    The row is the drag area; double-click it to maximize and restore.
-- [ ] **Caption buttons.** Hover maximize (Windows 11).
-  - Expect: Snap Layouts flyout. Min / max / close work; close hover is red.
-- [ ] **Title and status bar.** Open a file, edit it.
-  - Expect: the title reads `<tab name> — scrivi`; the status bar shows live `Ln, Col`,
-    the line ending (LF / CRLF / CR) and the encoding.
-- [ ] **Resize and edges.** Drag every edge and corner; snap to a half; maximize.
-  - Expect: no flicker, no gaps, nothing painted outside the Window.
-- [ ] **Minimize, restore, Alt+Tab.** Expect: the Window returns as it was.
-
-## Menus, Alt and access keys (§14)
-
-- [ ] **Alt opens the menu bar.** Press and release Alt, then F10.
-  - Expect: File gets focus (underlined access keys appear); Left / Right moves between
-    File, Edit, View; Esc closes.
-- [ ] **Alt+F / Alt+E / Alt+V** open File / Edit / View. Then press an access key
-  in the open menu (for example `N` in File for New tab, `S` for Save, `x` for Exit).
-  - Expect: the underlined letter runs that item.
-- [ ] **Hover and keys in menus.** Open File, hover each item, use Up / Down / Home / End, Enter.
-  - Expect: one highlight at a time; a submenu (Recent files, Encoding, Line endings)
-    opens on Right or hover and closes on Left or Esc (Esc closes only the submenu).
-- [ ] **Shortcut labels.** Open each menu.
-  - Expect: every item shows its keys: Ctrl+T, Ctrl+O, Ctrl+S, Ctrl+Shift+S, Ctrl+W, Ctrl+Z, Ctrl+Y,
-    Ctrl+X, Ctrl+C, Ctrl+V, Ctrl+A, Ctrl+F, Ctrl+H, Ctrl+G, Ctrl+E, Alt+Z, Ctrl++, Ctrl+−, Ctrl+0.
-- [ ] **Greyed items.** Empty Untitled tab; then a read-only Tab.
-  - Expect: Undo / Redo grey when there is nothing to do; Cut and Paste grey in a read-only Tab;
-    Recent files grey when the list is empty.
-- [ ] **Clicking away** (on the editor, on another Window) closes an open menu.
-- [ ] **Menu keys over the Rendered view** (see below): they still work.
-
-## Tabs (§5, §14)
-
-- [ ] **Add and close.** Ctrl+T (and Ctrl+N), then Ctrl+W; click `+`; click a Tab's ×;
-  middle-click a Tab.
-  - Expect: new Untitled tabs; a neighbour becomes active after a close; closing the last Tab closes the Window.
-- [ ] **Switch.** Click a Tab; Ctrl+Tab and Ctrl+Shift+Tab.
-  - Expect: each Tab keeps its own caret, scroll, undo history and Notice.
-- [ ] **Unsaved dot.** Edit a saved Tab.
-  - Expect: a dot replaces the × until you save; Save clears it.
-- [ ] **Close with unsaved edits.** Ctrl+W on an edited Tab.
-  - Expect: Save / Don't save / Cancel. Closing the Window with several unsaved Tabs shows one
-    dialog listing them: Save all / Discard all / Cancel. Cancel keeps everything.
-- [ ] **Overflow.** Open about 30 files (a folder of `.txt`, Ctrl+O with multiple selection or
-  `scrivi.exe a.txt b.txt ...`), in a narrow Window.
-  - Expect: Tabs shrink to a minimum width then the strip scrolls; the active Tab is scrolled
-    into view; the mouse wheel over the strip scrolls it; `+` stays reachable.
-- [ ] **Tooltips.** Hover a Tab with a long name.
-  - Expect: the full path.
-- [ ] **Open the same file twice** (Ctrl+O, double-click in Explorer, `scrivi.exe <path>` again).
-  - Expect: switches to the existing Tab, no duplicate; the Window comes to front (or the taskbar flashes).
-- [ ] **Save As onto a file open in another Tab.** Expect: refused, with a message.
-
-## Open, save, encodings, line endings (§6, §7)
-
-- [ ] **Open dialog.** Ctrl+O, pick several files.
-  - Expect: one Tab each; the file type filter lets you pick any file.
-- [ ] **Save an Untitled tab** (Ctrl+S): Save As dialog, default name, `.txt` added if none.
-  - Expect: the Tab takes the file's name; the file appears in Explorer.
-- [ ] **Save is atomic.** Edit a file, Save; check the folder.
-  - Expect: no stray temp files; the file keeps its times / attributes as far as Windows allows;
-    a read-only file or a locked file gives a clear error and keeps your text.
-- [ ] **Encodings.** Open UTF-8, UTF-8 with BOM, UTF-16 LE, UTF-16 BE and Windows-1252 files
-  (accents, euro sign, Italian text).
-  - Expect: right text, and the status bar names the encoding. File > Encoding changes how it
-    will be saved; *Reopen with encoding…* reloads with another one. Saving keeps the BOM state.
-- [ ] **Line endings.** Open an LF, a CRLF and a CR file; File > Line endings.
-  - Expect: the status bar shows each; choosing another converts on save; a new line keeps the file's style.
-- [ ] **Recent files.** Open and save a few files; File > Recent files.
-  - Expect: newest first, at most 10; a click opens one; a missing file is dropped with a message.
-- [ ] **Drag and drop** a file onto the Window. Expect: opens in a Tab.
-- [ ] **Non-text file** (a `.png` or `.exe`). Expect: no crash; write down what it shows.
-
-## Source view and markdown styling (§3)
-
-- [ ] **Source view basics.** Type, paste, undo / redo, select all.
-  - Expect: line numbers; a calm font; the caret line is subtly highlighted.
-- [ ] **Markdown styling.** Open `notes.md` with headings, bold, italic, strike, inline code,
-  a link, a bare URL, a task list, a numbered list, a quote and a fenced code block;
-  see `docs/screenshots/source-view.png`.
-  - Expect: each is styled as in the screenshot; Untitled tabs are styled too, and lose the styling when saved as `.txt`.
-- [ ] **A `.txt` or `.log` gets no markdown styling.**
-- [ ] **A markdown file over 1 MB** gets no styling and no Rendered view (Ctrl+E greyed).
-- [ ] **Word wrap.** Alt+Z on a long line.
-  - Expect: wraps / unwraps; the choice is remembered (see *Remembered settings*).
-- [ ] **Zoom.** Ctrl++ / Ctrl+− / Ctrl+0 and Ctrl+wheel.
-  - Expect: the text and line numbers scale together; reset returns to 100%; the level is remembered.
-
-## Find, replace, go to line
-
-- [ ] **Find.** Ctrl+F, type a word.
-  - Expect: the find bar appears under the Tabs; matches are highlighted as you type; Enter / Shift+Enter
-    go next / previous; Esc closes and keeps the selection; a search with no match says so.
-- [ ] **Replace.** Ctrl+H; Replace and Replace all.
-  - Expect: counts are right; one Ctrl+Z undoes a Replace all.
-- [ ] **Match case** (the `Aa` toggle in the find bar). Expect: it changes the matches at once; the bar shows "n of m".
-- [ ] **Go to line.** Ctrl+G, enter 1, a middle line, and a number past the end.
-  - Expect: the caret lands there; an out-of-range number goes to the last line or says so.
-- [ ] **In a Large file** (read-only): Find works, Replace is off.
-- [ ] **In the Rendered view:** Find, Replace and Go to line are greyed (they only act on the Source view).
-
-## Rendered view (§3, §14)
-
-- [ ] **Toggle.** In a markdown Tab press Ctrl+E (or View > Rendered view); see
-  `docs/screenshots/rendered-view.png`.
-  - Expect: formatted output in the same place; the status bar reads *Rendered view · Esc to edit*;
-    the first show feels instant on notes-sized files. Text is read-only.
-- [ ] **Esc returns** to the Source view with the caret and scroll where you left them.
-  Ctrl+E also toggles back.
-- [ ] **Content.** Headings, task list checkboxes, nested lists, tables, quotes, code blocks, strikethrough,
-  footnotes (if in your sample).
-  - Expect: formatted as in the screenshot; scripts and raw HTML are not run (try a `<script>` and an `<iframe>`).
-- [ ] **Images.** A relative image (`![x](img/a.png)`), one in a parent folder (`../pics/b.png`),
-  one with a space in its name, and an SVG.
-  - Expect: they show. A remote image (`https://...`), a `file:///` image and a drive-letter path
-    do **not** load (privacy: no network from the page).
-- [ ] **Links.** Click an `https://` link and a `mailto:` link.
-  - Expect: the default browser / mail client opens; the Window page does not navigate.
-- [ ] **Anchor links.** Click `[the table](#the-table)` (heading slug).
-  - Expect: scrolls to that heading in the page.
-- [ ] **Other links** (`file:///...`, `other.md`, `javascript:`). Expect: nothing happens.
-- [ ] **No new windows.** Ctrl+click or middle-click a link. Expect: no extra WebView2 window.
-- [ ] **Keys inside the page.** Ctrl+E, Esc, Ctrl+W, Ctrl+T, Ctrl+Tab, Ctrl+O, Alt+F and Alt+Z.
-  - Expect: handled by scrivi, not swallowed by the page; Ctrl+C copies the selected text.
-- [ ] **Menu while rendered.** Edit: Cut and Paste are grey, Copy works on a selection; no spell
-  check menu appears on right-click.
-- [ ] **Two markdown Tabs.** Render one, switch to another.
-  - Expect: each Tab remembers whether it is rendered; switching is quick and shows no stale page.
-- [ ] **Edit then render.** Change text, Ctrl+E.
-  - Expect: it shows the current (unsaved) text.
-- [ ] **Wide and tall content.** A wide table and a very long page.
-  - Expect: scrolls; the page resizes with the Window; DPI looks sharp.
-- [ ] **Teardown.** See *Performance*: after Esc, the `msedgewebview2.exe` children of scrivi exit.
-- [ ] **WebView2 runtime missing** (only if you can test it, for example in a VM without it).
-  - Expect: a clear message, and the Source view keeps working.
-
-## Large file mode (§8)
-
-- [ ] **Open a file over 50 MB** (see *Performance* for how to make one).
-  - Expect: opens read-only; a Notice says so; no word wrap, no styling, no undo history;
-    scrolling and Ctrl+End are smooth; Find works.
-- [ ] **Edit attempts.** Type, paste, Ctrl+Z in it. Expect: nothing changes; no crash.
-- [ ] **A big markdown file** (over 1 MB, under 50 MB). Expect: no styling, no Rendered view.
-- [ ] **Close it** and check memory. Expect: it drops back to near idle.
-- [ ] **Live log (accepted limitation).** Append to a Large file from PowerShell
-  (`Add-Content`) while it is open.
-  - Expect: it reloads after each change (the debounce means about once a second); this is the
-    accepted v1 limitation, listed under README *Known limitations*.
-
-## Spell check (§3)
-
-- [ ] **Markdown and Untitled only.** Open `.md` with a misspelling in Italian and in English, then a `.txt`.
-  - Expect: red squiggles under unknown words in the first; none in `.txt` or in code spans / blocks / URLs.
-- [ ] **Right-click a squiggle.**
-  - Expect: suggestions at the top ("(No suggestions)" if none); choosing one fixes the word (one undo step);
-    *Add to dictionary* removes the squiggle at once and it stays away after a restart. The usual
-    Undo / Cut / Copy / Paste items follow.
-- [ ] **Both languages** accept their own words. A word right in either Italian or English is not flagged.
-- [ ] **Typing.** Type a wrong word, then a space. Expect: squiggle appears shortly; the UI stays smooth on a long file.
-- [ ] **No Windows spell checker for a language** (turn one off in Settings > Time & language > Typing).
-  - Expect: no crash; that language just is not checked.
-
-## Remembered settings and the jump list (§10)
-
-- [ ] **Window.** Move, resize, maximize; quit; relaunch.
-  - Expect: same place and size; maximized comes back maximized; a window left on a disconnected monitor
-    comes back on screen.
-- [ ] **Wrap and zoom** come back as you left them.
-- [ ] **Settings file.** Look at `%LOCALAPPDATA%\scrivi\scrivi.ini`.
-  - Expect: plain text with window, wrap, zoom and `[recent]`. Delete it: scrivi starts with defaults.
-- [ ] **Jump list.** Right-click scrivi on the taskbar (and pin it).
-  - Expect: your recent files (the same ten as File > Recent files); clicking one opens it in the running
-    Window (no second Window). Also check Explorer's own Recent list gets the file.
-- [ ] **Tabs are not restored** after a restart: expect a fresh Untitled tab (the closing prompt asked about
-  unsaved text first).
+  - Expect: scrivi opens with the file in a Tab; no console window.
 
 ## Launch and one Window (§2)
 
-- [ ] **One resident.** `scrivi.exe a.txt`, then `scrivi.exe b.txt` from a console and from Explorer.
+- [ ] **One Window.** `scrivi.exe a.txt`, then `scrivi.exe b.txt`, from a console and from Explorer.
   - Expect: a second Tab in the same Window; the second process exits at once; one `scrivi.exe` in Task Manager.
-- [ ] **Launch speed.** Double-click a `.txt` with scrivi closed.
-  - Expect: the text is visible about as fast as Notepad does (numbers in *Performance*).
-- [ ] **Elevated launch (SCRIVI-13).** Start scrivi from an *Administrator* console or "Run as administrator".
-  - Expect: scrivi relaunches itself through Explorer as the normal user (so drag-and-drop and the
-    one-Window rule keep working); no second Window, no UAC loop; the file opens.
-  - Also: with a normal scrivi open, run `scrivi.exe b.txt` from the admin console. Expect: opens in the existing Window.
-- [ ] **Paths.** Open a file with spaces, accents, a long path (over 260 characters), a UNC path and a
-  network drive. Expect: opens; Save works.
-- [ ] **Bad arguments.** `scrivi.exe C:\nope.txt`.
-  - Expect: no crash. Write down what happens (an empty Tab named `nope.txt`, or a message): the spec does not
-    fix it.
-- [ ] **Exit.** Close the Window. Expect: the process ends (no `scrivi.exe` left in Task Manager).
+- [ ] **Elevated launch (SCRIVI-13).** From an *Administrator* console run `scrivi.exe C:\some\file.md`.
+  - Expect: the file opens in a normal, non-elevated resident (check the Elevated column in Task Manager).
+    Known: it currently also leaves an extra Untitled tab (SCRIVI-28); note whether it does.
+- [ ] **Exit.** Close the Window. Expect: no `scrivi.exe` left in Task Manager.
+
+## Window and title row (§4)
+
+- [ ] **Move and maximize.** Drag the Window by the title row; double-click the title row to maximize and restore.
+  - Expect: the row is the drag area; no gaps or flicker.
+- [ ] **Resize.** Drag all 8 edges and corners.
+  - Expect: each resizes; nothing is painted outside the Window.
+- [ ] **Snap Layouts.** Hover the maximize button (Windows 11).
+  - Expect: the Snap Layouts flyout appears.
+- [ ] **Auto-hide taskbar.** Turn on auto-hide, maximize the Window, move the mouse to the taskbar edge.
+  - Expect: the taskbar still reveals.
+- [ ] **Caption buttons.** Press a caption button and release over the empty title row; then press minimize,
+  drag onto maximize and release.
+  - Expect: no button stays drawn pressed; the second case fires nothing.
+- [ ] **Look.** Compare with variant E (`prototype/window-look/index.html?variant=E`, branch `prototype/window-look`)
+  and `docs/screenshots/source-view.png`.
+  - Expect: it matches: one row with icon, File / Edit / View, Tabs, `+`, then the caption buttons.
+- [ ] **Title and status bar.** Open a file and edit it.
+  - Expect: title `<tab name> — scrivi`; the status bar shows live `Ln, Col`, the line ending and the encoding.
+
+## Menus, Alt and access keys (§14)
+
+- [ ] **Click navigation.** Click File, then move onto Edit and View.
+  - Expect: the popup follows the mouse. Click File again while it is open: it closes.
+- [ ] **Alt alone.** Press and release Alt.
+  - Expect: File is highlighted and F, E and V are underlined; ← and → move between menus, Enter opens one,
+    Esc leaves. The same with F10.
+- [ ] **Alt+F.** Expect: File opens with the first item selected. Press ↓ to Encoding, → opens the submenu,
+  ← closes it.
+- [ ] **Alt+E / Alt+V** open Edit / View; an access key in an open menu (for example `N`, `S`) runs that item.
+- [ ] **Shortcut labels.** Open each menu.
+  - Expect: every item shows its keys and they agree with the README shortcut table.
+- [ ] **Greyed items.** Look at Edit and View on an empty Untitled tab and on a `.txt` / read-only Tab.
+  - Expect: Undo / Redo grey when there is nothing to do; Cut and Paste grey in a read-only Tab;
+    Rendered view grey on a `.txt` (see *Rendered view*); Recent files grey when the list is empty.
+
+## Tabs (§5, §14)
+
+- [ ] **Open several.** Select 5 files in Explorer and open them; then open one of them again.
+  - Expect: 5 Tabs; the repeat switches to that file's Tab, no duplicate.
+- [ ] **Keeps its view.** Scroll a long wrapped `.md`, select some text, Ctrl+Tab away and back.
+  - Expect: the same scroll position and selection.
+- [ ] **Overflow and scrolling.** Open 12 or more files.
+  - Expect: Tabs stay at least 120 px wide, then ‹ › scroll whole Tabs. Hovering a Tab shows a tooltip with
+    the full path.
+- [ ] **Close with unsaved edits.** Type in a Tab, then Ctrl+W.
+  - Expect: Save / Don't save / Cancel. Alt+F4 with 2 edited Tabs: one dialog listing both, with
+    Save all / Discard all / Cancel.
+- [ ] **Add and close.** Middle-click a Tab, its ×, the `+`, Ctrl+T and Ctrl+N.
+  - Expect: the Tab closes (middle-click and ×) or a new Untitled tab appears (`+`, Ctrl+T, Ctrl+N).
+    Ctrl+Tab / Ctrl+Shift+Tab switch.
+- [ ] **Save As onto a file open in another Tab.** Expect: refused with a message.
+
+## Open, save, encodings, line endings (§6, §7)
+
+- [ ] **Unedited Ctrl+S keeps the bytes.** Open a UTF-16 LE, a Windows-1252 and a CRLF file, Ctrl+S each
+  without editing, then `fc /b original saved`.
+  - Expect: the bytes are unchanged.
+- [ ] **Line endings.** On a CRLF file choose File > Line endings > LF.
+  - Expect: the unsaved dot appears, the status bar says LF, and saving writes LF.
+- [ ] **Undo clears the dot.** Type a letter, then Ctrl+Z.
+  - Expect: the dot appears, then goes away.
+- [ ] **Save an Untitled tab.** Ctrl+N, type, Ctrl+S.
+  - Expect: Save As opens in Documents with "Untitled 1.md".
+- [ ] **Unencodable text.** File > Encoding > Windows-1252 on a Tab containing an emoji, then Ctrl+S.
+  - Expect: the "Save as UTF-8" dialog appears.
+- [ ] **Drag and drop.** Drag 2 files from Explorer onto the editor, then 2 onto the title row.
+  - Expect: each opens in a Tab.
+- [ ] **Save all on close.** Alt+F4 with 2 edited Tabs, choose Save all.
+  - Expect: both files are written.
+- [ ] **Invalid bytes.** Open a file with invalid bytes after a UTF-8 BOM.
+  - Expect: it is read-only with a note. File > Reopen with encoding… > Windows-1252 makes it editable.
+- [ ] **Save-path safety.** Save a file that has a hard link (`fsutil hardlink create`), and a file with a
+  very long name.
+  - Expect: both names of the hard link show the new text; the long name saves.
+- [ ] **Non-text file** (a `.png`). *(record)*: no crash.
+
+## Source view and markdown styling (§3)
+
+- [ ] **Markdown look.** Open a `.md` notes file; compare with `docs/screenshots/source-view.png`.
+  - Expect: bold blue headings, grey markers, tinted code, a green `[x]`.
+- [ ] **Typing restyles.** Type in a 900 KB `.md`.
+  - Expect: the styling updates after a short pause, with no stutter.
+- [ ] **Untitled tabs are styled.** Ctrl+N and type markdown. Expect: styled.
+- [ ] **Over 1 MB.** Open a `.md` over 1 MB.
+  - Expect: unstyled; the status bar says "Markdown styling off (over 1 MB)".
+- [ ] **Changing extension.** Save As `.md` → `.txt`, then `.txt` → `.md`.
+  - Expect: the styling clears, then comes back.
+
+## Large file mode (§8)
+
+- [ ] **Over 50 MB** (make one: see *Performance*).
+  - Expect: the amber Notice "Large file (N MB): read-only, without wrap or styling." with ×, and
+    "Read-only" in the status bar.
+- [ ] **Editing is refused.** Type in it. Expect: nothing changes; × dismisses the Notice.
+- [ ] **Just under the limit.** A 49 MB file. Expect: editable and it wraps.
+
+## Find, go to line, wrap, zoom
+
+- [ ] **Find.** Select a word, press Ctrl+F.
+  - Expect: the bar opens pre-filled; matches are highlighted, the current one more strongly, with "n of m".
+    Enter, Shift+Enter and F3 step and wrap around. Esc closes the bar when it has focus.
+- [ ] **Match case and Replace.** Toggle `Aa`; press Ctrl+H.
+  - Expect: `Aa` changes the matches; Ctrl+H adds the replace row; Replace replaces and moves on;
+    Replace all, then one Ctrl+Z restores everything.
+- [ ] **Go to line.** Ctrl+G, a number, Enter.
+  - Expect: jumps to the line, centres it, and the bar closes.
+- [ ] **Word wrap.** Alt+Z.
+  - Expect: toggles wrap, checked in View, greyed on a Large file. Alt alone after Alt+Z does not open
+    the menu bar.
+- [ ] **Zoom.** Ctrl++, Ctrl+−, Ctrl+0 and Ctrl+wheel.
+  - Expect: it zooms; the status bar shows the level, for example 118%.
+- [ ] **Italian keyboard.** Press the Ctrl+plus and Ctrl+minus keys. Expect: they zoom in and out.
+- [ ] **Minimum width.** Narrow the Window to its 480 px minimum with the find bar open.
+  - Expect: the bar still fits. Repeat across a DPI change (see *DPI*).
+- [ ] **Combinations.** Open the find bar with a Notice showing and with spell squiggles on screen;
+  press Ctrl+E with the bar open.
+  - Expect: the layout holds; Ctrl+E closes the bar.
+
+## Spell check (§3)
+
+- [ ] **Flags the typo.** In a `.md` type "Prenotare il tagliandoo per il preventivo".
+  - Expect: only "tagliandoo" gets a muted-red squiggle.
+- [ ] **Right-click it.**
+  - Expect: suggestions (tagliando…), Add to dictionary, then Undo / Cut / Copy / Paste / Select all.
+- [ ] **Add to dictionary.** Expect: the squiggle goes at once and still holds after a restart.
+- [ ] **No squiggle** under a `` `code` `` span or a bare URL.
+- [ ] **A `.txt` Tab** gets no squiggles at all.
+- [ ] **English.** Misspell an English word in the same `.md`. Expect: it is flagged too.
+
+## Rendered view (§3, §14)
+
+- [ ] **Compare with the mockup.** Open `tests/fixtures/rendered/notes/notes.md`, press Ctrl+E
+  (see `docs/screenshots/rendered-view.png`).
+  - Expect: it matches the mockup; the images are lower down the page.
+- [ ] **Links.** Click "WebView2", "write to me", "the table".
+  - Expect: the browser opens; the mail client opens; the page scrolls to Tools.
+- [ ] **Leave it.** Press Esc; then Ctrl+E again and press Ctrl+E inside the page; check Ctrl+Tab and Ctrl+W
+  with the page focused.
+  - Expect: each of Esc and Ctrl+E returns to the Source view; Ctrl+Tab and Ctrl+W work.
+- [ ] **Image from an Untitled tab.** In an Untitled tab type `![x](some.png)`, with `some.png` in Documents; Ctrl+E.
+  - Expect: the image shows.
+- [ ] **Minimize and restore** while rendered.
+  - Expect: the page is back, and the arrow keys scroll it.
+- [ ] **View > Rendered view** enabled on `.md`, greyed on `.txt`.
+- [ ] **Page is inert.** Right-click in the page; drop a file on the page.
+  - Expect: no context menu; no navigation.
+- [ ] **Menu keys from the page.** With the page focused press Alt, F10 and Alt+F; then Alt+Z.
+  - Expect: they reach the menu bar; Alt+Z still toggles wrap.
+- [ ] **Edit menu while rendered.** Expect: Cut / Copy / Paste / Select all are greyed; Ctrl+C inside the
+  page still copies. Find, Replace and Go to line are greyed.
+- [ ] **Big page.** Make a `.md` of 10k lines of `# a`; Ctrl+E.
+  - Expect: the Window does not freeze.
+- [ ] **Too large.** A 1.2 MB `.md`, Ctrl+E. Expect: "Too large to render".
+- [ ] **Teardown.** About 1 s after leaving the Rendered view, look in Task Manager.
+  - Expect: no `msedgewebview2.exe` under scrivi (also checked under *Performance*).
+
+## Remembered settings and the jump list (§10)
+
+Release build.
+
+- [ ] **Jump list.** `scrivi.exe --register`, open 2–3 files, right-click the taskbar icon.
+  - Expect: they are listed under Recent; clicking one opens it in the running Window.
+- [ ] **Recent files.** File > Recent files.
+  - Expect: newest first, at most 10; reopening or saving a file moves it to the top. Delete a file and pick
+    it: a status flash, and it leaves the list.
+- [ ] **Window.** Move and resize, close, reopen; maximize, close, reopen.
+  - Expect: same place; still maximized. A position on a monitor that is gone falls back to a visible one.
+- [ ] **Wrap and zoom.** Ctrl+wheel zoom and Alt+Z, restart. Expect: both survive.
 
 ## Registration (§12)
 
@@ -275,17 +258,13 @@ Settings opens at Default apps for Scrivi. Nothing is written to `UserChoice`.
 
 ## DPI change between monitors (§4, §14)
 
-Needs two monitors with different scaling (for example 100% and 150%), or one monitor whose scale you
-change while scrivi runs.
+Needs two monitors with different scaling (for example 100% and 150%).
 
 - [ ] **Drag the Window** from one monitor to the other, in the Source view.
-  - Expect: the title row, Tabs, menus, status bar, line numbers and text all rescale at once; no
-    blurry edges, no clipped Tabs, no overlap; the caption buttons stay hit-able.
-- [ ] **Same in the Rendered view.** Expect: the page rescales sharply; the Window keeps its on-screen size.
-- [ ] **Menus and dialogs** opened after the move (File menu, Find bar, Save As, the close prompt).
-  - Expect: sized for the new monitor.
-- [ ] **Change the Windows scale** (Settings > Display) with scrivi open. Expect: the same as dragging.
-- [ ] **Relaunch on the second monitor.** Expect: the remembered Window position and size still fit.
+  - Expect: the title row, margins, Tabs and line numbers rescale; no clipped Tabs or overlap.
+- [ ] **Same in the Rendered view.** Expect: the page rescales.
+- [ ] **Find bar across the move.** Open the find bar at the 480 px minimum width and drag between monitors.
+  - Expect: the bar still fits.
 
 ## Disk change (SCRIVI-19)
 
@@ -312,15 +291,12 @@ Manager (Details tab) for memory and size, and Process Explorer or `Get-CimInsta
 
 - [ ] **Notes file.** Time from double-click to text on screen for a small `.md` / `.txt` file, scrivi not running.
   - Expect: about as fast as Notepad; no splash, no flash of an empty Window.
-- [ ] **Hand-over speed.** With scrivi running, open a second file from Explorer.
-  - Expect: the new Tab appears at once.
 - [ ] **50 MB log.** Make one:
   `$s = 'x' * 99 + "`n"; [IO.File]::WriteAllText("$env:TEMP\50mb.log", $s * 540000)` (about 54 MB, just over the 50 MiB limit), then open it.
   - Expect: read-only Notice, usable at once; record the time.
 - [ ] **200 MB log.** The same with `* 2000000`.
   - Expect: record the time. SCRIVI-18 measured about 1 s on a busy machine; the spec target is about 337 ms
-    (see SCRIVI-30, which tracks the gap). Slower than 1 s on an idle machine is worth a note. Memory should
-    not be several times the file size.
+    (see SCRIVI-30, which tracks the gap).
 - [ ] **Exe size.** `(Get-Item .\scrivi.exe).Length`.
   - Expect: record it. Now 2.57 MB, against the spec's 1–2 MB; a known limitation (README).
 - [ ] **Idle memory.** One empty Untitled tab, wait a minute; Task Manager > Details > *Memory (private working set)*.
@@ -329,9 +305,7 @@ Manager (Details tab) for memory and size, and Process Explorer or `Get-CimInsta
   - Expect: none. In particular no `msedgewebview2.exe`.
 - [ ] **WebView2 exits after the Rendered view.** Ctrl+E on a markdown Tab: `msedgewebview2.exe` children appear.
   Press Esc (and, separately, close the markdown Tab while rendered).
-  - Expect: within a few seconds every `msedgewebview2.exe` child of scrivi is gone and memory falls back.
-- [ ] **Repeated toggles.** Ctrl+E / Esc about 20 times. Expect: no growth in memory, handles or child count.
-- [ ] **Idle CPU.** Leave it ten minutes. Expect: 0% CPU; with a file open, the watcher stays quiet.
+  - Expect: within a few seconds every `msedgewebview2.exe` child of scrivi is gone.
 
 ## Release
 
@@ -339,10 +313,11 @@ Steps from SCRIVI-26 (issue 18). Only after every section above passes, and the 
 and in README "Known limitations".
 
 - [ ] `Cargo.toml` version is `0.1.0` and `CHANGELOG.md` has the 0.1.0 entry with the date (README *Releasing*).
+- [ ] The README shortcut table matches spec §4 (SCRIVI-25).
 - [ ] The three checks pass on `main`: `cargo build --release`, `cargo clippy --all-targets -- -D warnings`, `cargo test`.
 - [ ] Tag and push: `git tag v0.1.0`, then `git push origin v0.1.0`. Never move or re-push a published tag;
   cut a new patch version instead.
-- [ ] `release.yml` finishes green.
+- [ ] `release.yml` finishes green (SCRIVI-25: after a real `v0.1.0` push the three assets appear on GitHub Releases).
 - [ ] The GitHub Release has the 3 assets: `scrivi.exe`, `scrivi-0.1.0-windows-x64.zip`, `SHA256SUMS.txt`.
 - [ ] Download the zip, check it against `SHA256SUMS.txt` and run `scripts\install.ps1` once: the
   *Setup* section works from the published zip.
