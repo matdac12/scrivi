@@ -2,11 +2,13 @@
 //!
 //! `style_runs` parses the whole text and returns UTF-8 byte ranges, each with
 //! one [`Style`]. The runs are sorted, never overlap, and always start and end
-//! on char boundaries, so the editor can walk them once with `SCI_SETSTYLING`.
+//! on char boundaries, so the Source view can walk them once with `SCI_SETSTYLING`.
 //!
-//! Bytes that no run covers are plain text: the editor styles the gaps with its
-//! default style. Markdown syntax that isn't text (`#`, `**`, backticks, `>`,
-//! bullets, `[ ]`, table pipes, a link's brackets) is [`Style::Marker`].
+//! Bytes that no run covers are plain text: the Source view styles the gaps with
+//! its default style. Everything the parser reports as syntax rather than text
+//! (`#`, `**`, backticks, `>`, bullets, `[ ]`, table pipes, a link's brackets,
+//! and also the blank lines, indentation and HTML between blocks) is
+//! [`Style::Marker`].
 //!
 //! # Nesting
 //!
@@ -33,7 +35,7 @@
 
 use std::ops::Range;
 
-use pulldown_cmark::{Event, LinkType, Options, Parser, Tag, TagEnd};
+use pulldown_cmark::{CodeBlockKind, Event, LinkType, Options, Parser, Tag, TagEnd};
 
 /// Above this many bytes a markdown file gets no styling (spec §5, the 1 MB rule).
 pub const STYLING_LIMIT: usize = 1024 * 1024;
@@ -148,15 +150,18 @@ fn paint_markdown(src: &str, styles: &mut [Style]) {
                 }
                 Tag::Image { .. } => cx.link += 1,
                 Tag::BlockQuote(_) => cx.quote += 1,
-                Tag::CodeBlock(_) => {
+                Tag::CodeBlock(kind) => {
                     cx.code_block = true;
-                    // Take the closing fence's line ending too, so the tint fills the row.
                     let mut end = range.end;
-                    if bytes.get(end) == Some(&b'\r') {
-                        end += 1;
-                    }
-                    if bytes.get(end) == Some(&b'\n') {
-                        end += 1;
+                    // Take the closing fence's line ending too, so the tint fills the row.
+                    // (An indented block's range already ends after its line ending.)
+                    if matches!(kind, CodeBlockKind::Fenced(_)) {
+                        if bytes.get(end) == Some(&b'\r') {
+                            end += 1;
+                        }
+                        if bytes.get(end) == Some(&b'\n') {
+                            end += 1;
+                        }
                     }
                     styles[range.start..end].fill(Style::CodeBlock);
                 }
@@ -206,7 +211,8 @@ fn paint_markdown(src: &str, styles: &mut [Style]) {
 
 /// After an inline link's text, `](address "title")` follows: paint the address.
 fn paint_destination(src: &str, from: usize, end: usize, styles: &mut [Style]) {
-    let Some(open) = src[from..end].find("](") else {
+    // The last `](` is this link's: an image nested in the text has its own before it.
+    let Some(open) = src[from..end].rfind("](") else {
         return; // a reference link: its address is elsewhere
     };
     let start = from + open + 2;
@@ -279,9 +285,7 @@ fn trim_url(url: &[u8]) -> usize {
     while end > 0 {
         let head = &url[..end];
         let drop = match head[end - 1] {
-            b'.' | b',' | b';' | b':' | b'!' | b'?' | b'\'' | b'"' | b'*' | b'_' | b'~' | b'>' => {
-                true
-            }
+            b'.' | b',' | b';' | b':' | b'!' | b'?' | b'\'' | b'"' | b'>' => true,
             b')' => count(head, b'(') < count(head, b')'),
             b']' => count(head, b'[') < count(head, b']'),
             _ => false,
@@ -487,6 +491,38 @@ mod tests {
     }
 
     #[test]
+    fn nested_image_link_and_url_ending_in_underscore() {
+        let r = runs(
+            "[![a](i.png)](u.html) http://a.example/x_ end
+",
+        );
+        has(&r, "i.png", Style::Url);
+        has(&r, "u.html", Style::Url);
+        has(&r, "http://a.example/x_", Style::Url);
+    }
+
+    #[test]
+    fn indented_block_keeps_the_blank_line_after_it() {
+        let r = runs(
+            "    code
+
+para
+",
+        );
+        assert!(r.iter().any(|&(t, s)| s == Style::CodeBlock
+            && t.ends_with(
+                "code
+"
+            )));
+        assert!(!r.iter().any(|&(t, s)| s == Style::CodeBlock
+            && t.ends_with(
+                "
+
+"
+            )));
+    }
+
+    #[test]
     fn urls_in_code_are_not_urls() {
         let r = runs("`http://a.example`\n\n```\nhttp://b.example\n```\n");
         assert!(!r.iter().any(|&(_, s)| s == Style::Url));
@@ -544,14 +580,14 @@ mod tests {
     }
 
     /// `cargo test --release mdstyle -- --ignored --nocapture`. The limit applies to
-    /// ordinary notes; the all-markup fixture is a stress test and only reported.
+    /// a prose Markdown file; the all-markup fixture is a stress test and only reported.
     #[test]
     #[ignore]
     fn bench_five_megabytes() {
         let (n, dense) = time_five_megabytes(ALL);
         eprintln!("5 MB, every line markup: {n} runs in {dense:.1} ms");
         let (n, prose) = time_five_megabytes(include_str!("../tests/fixtures/mdstyle/prose.md"));
-        eprintln!("5 MB, ordinary notes: {n} runs in {prose:.1} ms");
+        eprintln!("5 MB, a prose Markdown file: {n} runs in {prose:.1} ms");
         assert!(prose < 100.0, "took {prose:.1} ms");
     }
 }
