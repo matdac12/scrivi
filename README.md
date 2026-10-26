@@ -40,6 +40,11 @@ before updating; the script refuses to overwrite a running copy.
 `scrivi.exe --unregister` removes exactly what `--register` wrote. Both only
 touch HKCU.
 
+`scrivi.exe --help` (also `-h`) prints the flags scrivi takes. `--` ends them,
+so `scrivi.exe -- --notes.md` opens a file whose name looks like a flag; any
+other `--flag` scrivi does not know prints the usage and exits 2. A plain path,
+which is what Explorer hands it on a double-click, opens as always.
+
 ### From source
 
 ```
