@@ -184,6 +184,20 @@
   .vC .status { display: none; }
   .vC .bar:not(.find) { order: 10; border-bottom: none; border-top: 1px solid var(--hair); }
 
+  /* =========== Variants D and E: A's look, fewer rows =========== */
+  .vA .tabs.row1 { z-index: 5; }
+  .tabs .menus { display: flex; align-self: center; gap: 0; margin-right: 6px; padding-right: 8px; border-right: 1px solid #D8D8D4; font-size: 12.5px; }
+  .tabs .menus span { padding: 4px 9px; border-radius: 4px; color: #2B2F35; }
+  .tabs .menus span.open { background: #E3E3E0; }
+  .vE .tabs { height: 42px; padding-left: 0; padding-right: 0; }
+  .vE .tabs .menus { margin-left: 2px; }
+  .appicon { align-self: center; width: 16px; height: 16px; margin: 0 10px 0 14px; border-radius: 3px; background: var(--ink); color: #fff; font: 700 10px/16px var(--ui); text-align: center; flex: none; }
+  .tabs .tl { display: flex; align-items: flex-end; gap: 2px; overflow: hidden; min-width: 0; flex: 0 1 auto; align-self: stretch; }
+  .vE .drag { flex: 1; min-width: 48px; align-self: stretch; }
+  .vE .tabs .controls { display: flex; align-self: stretch; }
+  .vE .tabs .controls span { width: 46px; display: grid; place-items: center; font-size: 11px; color: #333; }
+  .vE .scroll { margin-left: 0; }
+
   /* --- prototype switcher (not part of the design) --- */
   .switcher { position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%); display: flex; align-items: center; gap: 6px; background: #111; color: #fff; padding: 6px 8px; border-radius: 999px; box-shadow: 0 6px 20px rgba(0,0,0,.35); font: 12px system-ui, sans-serif; z-index: 100; max-width: calc(100vw - 16px); flex-wrap: wrap; justify-content: center; }
   .switcher button { font: inherit; color: #fff; background: #2A2A2A; border: 0; border-radius: 999px; padding: 4px 10px; cursor: pointer; }
@@ -202,6 +216,8 @@ const VARIANTS = {
   A: "Prototipo: connected tabs, line numbers",
   B: "Scrittoio: one surface, prose font, column",
   C: "Quaderno: pill tabs, status in the tab row",
+  D: "A, menus in the tab row (Windows title bar kept)",
+  E: "A, one row: icon, menus, tabs, window buttons",
 };
 const STATES = {
   normal: "Normal", tabs: "12 tabs", find: "Find & replace", disk: "Disk change",
@@ -302,13 +318,17 @@ function tabsHTML(v, st, info) {
   const many = list.length > 8;
   const tabs = list.map((t, i) => {
     const on = i === active;
-    const w = v === "A" && many ? ' style="width:118px"' : "";
+    const w = "ADE".includes(v) && many ? ` style="width:${v === "A" ? 118 : 132}px;flex:none"` : "";
     const trail = t.dirty && !on ? '<span class="dot" title="Unsaved changes"></span>' : t.dirty && on ? '<span class="dot" title="Unsaved changes"></span>' : '<span class="cl">✕</span>';
     return `<div class="tab ${on ? "on" : ""}"${w}><span class="ic ${t.md ? "md" : ""}"></span><span class="nm">${t.n}</span>${trail}</div>`;
   }).join("");
   const scroll = many ? `<div class="scroll"><span>‹</span><span>›</span></div>` : "";
   const meta = v === "C" ? `<div class="meta">${info.flag ? `<span class="flag">${info.flag}</span>` : ""}<span>${info.pos}</span><span>${info.eol}</span><span>${info.enc}</span></div>` : "";
-  return `<div class="tabs">${tabs}<div class="plus" title="New tab (Ctrl+T)">+</div>${v === "C" ? meta : ""}${scroll}</div>`;
+  const inRow = "DE".includes(v);
+  const menus = inRow ? `${v === "E" ? '<span class="appicon">S</span>' : ""}<div class="menus"><span class="${st === "file" ? "open" : ""}">File</span><span>Edit</span><span class="${st === "view" ? "open" : ""}">View</span></div>` : "";
+  const ctrls = v === "E" ? `<div class="drag"></div><div class="controls"><span>—</span><span>▢</span><span>✕</span></div>` : "";
+  const dd = inRow ? menuHTML(st, 39, v === "E" ? 40 : 6) : "";
+  return `<div class="tabs ${inRow ? "row1" : ""}">${menus}${inRow ? `<div class="tl">${tabs}</div>` : tabs}<div class="plus" title="New tab (Ctrl+T)">+</div>${v === "C" ? meta : ""}${scroll}${ctrls}${dd}</div>`;
 }
 
 function barsHTML(st) {
@@ -322,16 +342,16 @@ function barsHTML(st) {
   return "";
 }
 
-function menuHTML(st) {
+function menuHTML(st, top = 25, left = 4) {
   const items = (arr) => arr.map(x => x === "-" ? '<div class="sep"></div>' : `<div class="it ${x[2] || ""}">${x[3] ? `<span class="chk">${x[3]}</span>` : ""}<span>${x[0]}</span><span class="k">${x[1] || ""}</span></div>`).join("");
-  if (st === "file") return `<div class="dropdown" style="left:4px">${items([
+  if (st === "file") return `<div class="dropdown" style="left:${left}px;top:${top}px">${items([
       ["New tab", "Ctrl+T"], ["Open…", "Ctrl+O"], ["Recent files", "›"], "-",
       ["Save", "Ctrl+S"], ["Save as…", "Ctrl+Shift+S"], "-",
       ["Encoding", "›", "hl"], ["Line endings", "›"], "-",
       ["Close tab", "Ctrl+W"], ["Exit", ""]])}</div>
-    <div class="dropdown sub" style="left:256px;top:248px">${items([
+    <div class="dropdown sub" style="left:${left + 252}px;top:${top + 223}px">${items([
       ["UTF-8", "", "", "●"], ["UTF-8 with BOM"], ["UTF-16 LE"], ["UTF-16 BE"], ["Windows-1252 (ANSI)"], "-", ["Reopen with encoding…"]])}</div>`;
-  if (st === "view") return `<div class="dropdown" style="left:96px">${items([
+  if (st === "view") return `<div class="dropdown" style="left:${left + 92}px;top:${top}px">${items([
       ["Rendered view", "Ctrl+E", "hl"], "-",
       ["Word wrap", "Alt+Z", "", "✓"], "-",
       ["Zoom in", "Ctrl++"], ["Zoom out", "Ctrl+−"], ["Reset zoom", "Ctrl+0"]])}</div>`;
@@ -378,10 +398,10 @@ function build(v, st) {
   const status = `<div class="status"><span class="seg left">${info.flag}</span><span class="seg">${info.pos}</span><span class="seg">${info.eol}</span><span class="seg">${info.enc}</span></div>`;
 
   const win = document.getElementById("win");
-  win.className = `win v${v} ${proseVariant && md && st !== "styling" ? "prose" : ""} ${column ? "column" : ""}`;
-  win.innerHTML = `
-    <div class="caption"><span class="icon">S</span><span>${title}${st === "large" ? " (read-only)" : ""} — scrivi</span><div class="controls"><span>—</span><span>▢</span><span>✕</span></div></div>
-    <div class="menubar"><span class="${st === "file" ? "open" : ""}">File</span><span>Edit</span><span class="${st === "view" ? "open" : ""}">View</span>${menuHTML(st)}</div>
+  win.className = `win v${v} ${"DE".includes(v) ? "vA" : ""} ${proseVariant && md && st !== "styling" ? "prose" : ""} ${column ? "column" : ""}`;
+  const caption = v === "E" ? "" : `<div class="caption"><span class="icon">S</span><span>${title}${st === "large" ? " (read-only)" : ""} — scrivi</span><div class="controls"><span>—</span><span>▢</span><span>✕</span></div></div>`;
+  const menubar = "DE".includes(v) ? "" : `<div class="menubar"><span class="${st === "file" ? "open" : ""}">File</span><span>Edit</span><span class="${st === "view" ? "open" : ""}">View</span>${menuHTML(st)}</div>`;
+  win.innerHTML = `${caption}${menubar}
     ${tabsHTML(v, st, info)}
     <div class="body">${barsHTML(st)}${body}</div>
     ${status}`;
