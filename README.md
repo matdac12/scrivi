@@ -8,13 +8,14 @@ Lean Rust on plain Win32: a few MB of memory when idle, no browser engine
 running behind it (WebView2 exists only while a Tab is in the Rendered view).
 Part of [mstack](https://github.com/matdac12/mstack).
 
-<!-- SCREENSHOT: placeholder. Issue 06 or 09 adds the screenshot of the Window here. -->
-*(Screenshot to come.)*
+![The Source view of a markdown file](docs/screenshots/source-view.png)
+
+![The Rendered view of the same file](docs/screenshots/rendered-view.png)
 
 ## Status
 
-Building v1. This README describes what scrivi does as specified; the editor
-itself is still being built.
+Version 0.1.0, the first release, is in its final hand check. It is checked by hand before each release
+([docs/qa.md](docs/qa.md)); the gaps found so far are under *Known limitations*.
 
 ## Install
 
@@ -98,6 +99,11 @@ CapsLock & n::Run("<path>\scrivi.exe")
   `.ini` is to be confirmed in the v1 hand check. From research, types that hard-code Notepad (`.bat`,
   `.reg`) keep Notepad.
 - **Right-click > New > Text Document:** to be confirmed in the v1 hand check.
+- **Opening a 200 MB log takes about 1 s** on a busy machine (SCRIVI-18); the spec target is about 337 ms
+  (tracked in SCRIVI-30). Files over 50 MB open read-only, without undo, wrap or styling.
+- **The exe is 2.57 MB**, above the spec's 1–2 MB goal.
+- **A live log over 50 MB reloads after each change.** A Large file that something keeps appending to is
+  reloaded after each debounced Disk change; accepted for v1.
 
 The steps for each check are in [docs/qa.md](docs/qa.md).
 
