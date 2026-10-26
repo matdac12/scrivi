@@ -102,12 +102,7 @@ pub struct View<'a> {
     pub access_keys: bool,
     /// The active Tab's Notice, drawn in the layout's Notice band.
     pub notice: Option<&'a notice::Spec>,
-    /// The find bar's contents, when it is open (12).
-    pub find: Option<&'a FindView>,
 }
-
-mod find;
-pub use find::FindView;
 
 pub(super) struct Fonts {
     menu: IDWriteTextFormat,
@@ -119,8 +114,6 @@ pub(super) struct Fonts {
     pub(super) notice: IDWriteTextFormat,
     pub(super) notice_strong: IDWriteTextFormat,
     pub(super) notice_button: IDWriteTextFormat,
-    /// The find bar's "Aa".
-    mono: IDWriteTextFormat,
 }
 
 pub struct Painter {
@@ -200,7 +193,6 @@ fn fonts(dw: &IDWriteFactory, ui: &HSTRING, icons: &HSTRING, scale: f32) -> Resu
         notice: text_format(dw, ui, 12.5 * scale, lead)?,
         notice_strong: text_format_weight(dw, ui, 12.5 * scale, lead, DWRITE_FONT_WEIGHT_SEMI_BOLD)?,
         notice_button: text_format_weight(dw, ui, 12.0 * scale, centre, DWRITE_FONT_WEIGHT_SEMI_BOLD)?,
-        mono: text_format(dw, &font_family(dw, &["Cascadia Mono", "Consolas"]), 11.5 * scale, centre)?,
     })
 }
 
@@ -495,7 +487,7 @@ fn draw_top(p: &Pass, v: &View, painter: &Painter) -> Result<()> {
         p.text(glyph, &f.caption, *r, ink)?;
     }
 
-    // Bands 10 and 11 fill the Notice and band 12 the find bar below.
+    // Band 12 fills the find bar; until then a plain surface if ever opened.
     p.fill(l.notice, colour::PAPER, 1.0)?;
     if let Some(spec) = v.notice {
         let parts = painter.notice_parts(l.notice, spec);
@@ -504,10 +496,7 @@ fn draw_top(p: &Pass, v: &View, painter: &Painter) -> Result<()> {
         })?;
     }
     p.fill(l.find, colour::FRAME, 1.0)?;
-    match v.find {
-        Some(find) => find::draw(p, find),
-        None => Ok(()),
-    }
+    Ok(())
 }
 
 /// Windows 11 connected tabs: the active one is paper with 8 px rounded top

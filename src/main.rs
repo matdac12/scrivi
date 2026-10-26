@@ -4,7 +4,6 @@
 mod app;
 mod chrome;
 mod editor;
-mod find;
 mod launch;
 mod mdstyle;
 mod mdview;
