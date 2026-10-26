@@ -1388,6 +1388,10 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             }
             // The editor's own popup is off: right-click shows spell check's menu.
             WM_CONTEXTMENU if wp.0 == a.editor.hwnd().0 as usize => {
+                // 13: no spell menu over the source behind the Rendered view.
+                if rendered_view::behind_page() {
+                    return LRESULT(0);
+                }
                 let wanted = a.shown.get().is_some_and(|id| a.tabs.borrow().get(id).is_some_and(Tab::spell_checked));
                 a.spell.context_menu(&a.editor, hwnd, lp, wanted);
                 LRESULT(0)

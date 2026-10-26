@@ -28,6 +28,12 @@ thread_local! {
     static KEYS: OnceCell<Vec<ACCEL>> = const { OnceCell::new() };
 }
 
+/// The active Tab is in the Rendered view: the editor behind it is read-only,
+/// and hidden once the page is up.
+pub(super) fn behind_page() -> bool {
+    BEHIND_PAGE.get()
+}
+
 pub(super) fn rect_of(r: Rect) -> RECT {
     RECT { left: r.left, top: r.top, right: r.right, bottom: r.bottom }
 }
