@@ -212,9 +212,10 @@ pub fn on_handoff(request: Request) {
     match request {
         // One Tab until 07: a later "new tab" only brings the Window forward.
         Request::NewTab => {}
-        // Until 07 the one Tab shows the first file.
+        // Until 07 the one Tab shows the first file, unless it holds
+        // unsaved edits: those are never dropped.
         Request::Open(paths) => {
-            if let Some(path) = paths.first() {
+            if let Some(path) = paths.first().filter(|_| !a.editor.is_modified()) {
                 open(a, path);
             }
         }
@@ -269,7 +270,8 @@ fn refresh_status(a: &App) {
     let (changed, refit, status) = {
         let mut ui = a.ui.borrow_mut();
         let changed = (ui.caret, ui.zoom) != (caret, zoom);
-        let refit = ui.digits != digits;
+        // Zoom scales the line numbers too.
+        let refit = ui.digits != digits || ui.zoom != zoom;
         ui.caret = caret;
         ui.zoom = zoom;
         ui.digits = digits;
@@ -302,6 +304,7 @@ fn relayout(a: &App) {
         let _ = GetClientRect(hwnd, &mut rc);
         (GetDpiForWindow(hwnd), IsZoomed(hwnd).as_bool())
     };
+    let border = resize_border(dpi).1;
     let editor = {
         let mut ui = a.ui.borrow_mut();
         let frame = Frame {
@@ -310,7 +313,7 @@ fn relayout(a: &App) {
             scale: dpi as f32 / 96.0,
             menu_text: ui.menu_text,
             maximized,
-            resize_border: resize_border(dpi).1,
+            resize_border: border,
             ..Frame::default()
         };
         ui.layout = Layout::new(&frame);
@@ -330,23 +333,6 @@ fn set_hover(a: &App, hover: Option<Hit>) {
         ui.layout.title
     };
     invalidate(a, Some(title));
-}
-
-/// Hover only lights up what can be clicked.
-fn hover_target(hit: Hit) -> Option<Hit> {
-    match hit {
-        Hit::Menu(_) | Hit::Tab(_) | Hit::TabClose(_) | Hit::NewTab | Hit::Minimize | Hit::Maximize | Hit::Close => Some(hit),
-        _ => None,
-    }
-}
-
-fn caption_button(ht: u32) -> Option<Hit> {
-    match ht {
-        HTMINBUTTON => Some(Hit::Minimize),
-        HTMAXBUTTON => Some(Hit::Maximize),
-        HTCLOSE => Some(Hit::Close),
-        _ => None,
-    }
 }
 
 fn track_leave(a: &App, nonclient: bool) {
@@ -428,7 +414,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             // never paints classic buttons over them.
             WM_NCMOUSEMOVE => {
                 track_leave(a, true);
-                set_hover(a, caption_button(wp.0 as u32));
+                set_hover(a, Hit::caption_button(wp.0 as u32));
                 DefWindowProcW(hwnd, msg, wp, lp)
             }
             WM_NCMOUSELEAVE => {
@@ -436,13 +422,13 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                     let mut ui = a.ui.borrow_mut();
                     ui.tracking_nc = false;
                     ui.pressed = None;
-                    ui.hover = ui.hover.filter(|h| caption_button(h.nc_code()).is_none());
+                    ui.hover = ui.hover.filter(|h| Hit::caption_button(h.nc_code()).is_none());
                     ui.layout.title
                 };
                 invalidate(a, Some(title));
                 DefWindowProcW(hwnd, msg, wp, lp)
             }
-            WM_NCLBUTTONDOWN | WM_NCLBUTTONDBLCLK => match caption_button(wp.0 as u32) {
+            WM_NCLBUTTONDOWN | WM_NCLBUTTONDBLCLK => match Hit::caption_button(wp.0 as u32) {
                 Some(button) => {
                     let title = {
                         let mut ui = a.ui.borrow_mut();
@@ -454,7 +440,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                 }
                 None => DefWindowProcW(hwnd, msg, wp, lp),
             },
-            WM_NCLBUTTONUP => match caption_button(wp.0 as u32) {
+            WM_NCLBUTTONUP => match Hit::caption_button(wp.0 as u32) {
                 Some(button) => {
                     let (pressed, title) = {
                         let mut ui = a.ui.borrow_mut();
@@ -478,7 +464,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                 track_leave(a, false);
                 let (x, y) = xy(lp);
                 let hit = a.ui.borrow().layout.hit_test(x, y);
-                set_hover(a, hover_target(hit));
+                set_hover(a, Some(hit).filter(|h| h.lights_up()));
                 LRESULT(0)
             }
             WM_MOUSELEAVE => {
@@ -539,7 +525,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             }
             WM_NOTIFY => {
                 let n = &*(lp.0 as *const NotifyHeader);
-                if n.hwnd_from == a.editor.hwnd().0 && n.code == sci::SCN_UPDATEUI {
+                if n.hwnd_from == a.editor.hwnd().0 && matches!(n.code, sci::SCN_UPDATEUI | sci::SCN_ZOOM) {
                     refresh_status(a);
                 }
                 LRESULT(0)

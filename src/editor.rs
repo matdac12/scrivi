@@ -53,6 +53,7 @@ pub mod sci {
     pub const SCI_GETLINECOUNT: u32 = 2154;
     pub const SCI_SETMARGINLEFT: u32 = 2155;
     pub const SCI_SETMARGINRIGHT: u32 = 2157;
+    pub const SCI_GETMODIFY: u32 = 2159;
     pub const SCI_LINEFROMPOSITION: u32 = 2166;
     pub const SCI_POSITIONFROMLINE: u32 = 2167;
     pub const SCI_SETREADONLY: u32 = 2171;
@@ -115,6 +116,7 @@ pub mod sci {
     pub const SCN_UPDATEUI: u32 = 2007;
     pub const SCN_MODIFIED: u32 = 2008;
     pub const SCN_PAINTED: u32 = 2013;
+    pub const SCN_ZOOM: u32 = 2018;
 }
 
 use sci::*;
@@ -308,6 +310,11 @@ impl Editor {
         self.call(SCI_SETSAVEPOINT, 0, 0);
         self.call(SCI_GOTOPOS, 0, 0);
         (encoding, eol)
+    }
+
+    /// Edited since the last load (Scintilla's save point).
+    pub fn is_modified(&self) -> bool {
+        self.call(SCI_GETMODIFY, 0, 0) != 0
     }
 
     pub fn caret(&self) -> Caret {

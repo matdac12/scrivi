@@ -121,7 +121,22 @@ pub enum Edge {
 }
 
 impl Hit {
+    /// The caption button behind a non-client hit-test code, if any.
+    pub fn caption_button(code: u32) -> Option<Hit> {
+        [Hit::Minimize, Hit::Maximize, Hit::Close].into_iter().find(|h| h.nc_code() == code)
+    }
+
+    /// Whether hovering this piece highlights it: only what can be clicked.
+    pub fn lights_up(self) -> bool {
+        matches!(
+            self,
+            Hit::Menu(_) | Hit::Tab(_) | Hit::TabClose(_) | Hit::NewTab | Hit::Minimize | Hit::Maximize | Hit::Close
+        )
+    }
+
     /// The `WM_NCHITTEST` answer. Everything we handle ourselves is HTCLIENT.
+    /// The icon drags like the caption: no system menu on click, and a
+    /// double-click maximises rather than closing.
     pub fn nc_code(self) -> u32 {
         use windows::Win32::UI::WindowsAndMessaging as wm;
         match self {
@@ -564,6 +579,25 @@ mod tests {
         // The note takes what is left on the left.
         assert_eq!(l.status_note(&cells), r(14, 674, 786, 700));
         assert_eq!(l.status_note(&[]), r(14, 674, 986, 700));
+    }
+
+    #[test]
+    fn caption_buttons_come_back_from_their_codes() {
+        for hit in [Hit::Minimize, Hit::Maximize, Hit::Close] {
+            assert_eq!(Hit::caption_button(hit.nc_code()), Some(hit));
+        }
+        assert_eq!(Hit::caption_button(2), None);
+        assert_eq!(Hit::caption_button(1), None);
+    }
+
+    #[test]
+    fn only_clickable_pieces_light_up_on_hover() {
+        for hit in [Hit::Menu(1), Hit::Tab(0), Hit::TabClose(0), Hit::NewTab, Hit::Close] {
+            assert!(hit.lights_up(), "{hit:?}");
+        }
+        for hit in [Hit::Caption, Hit::Icon, Hit::Editor, Hit::Status, Hit::Resize(Edge::Top), Hit::Nowhere] {
+            assert!(!hit.lights_up(), "{hit:?}");
+        }
     }
 
     #[test]
