@@ -26,6 +26,11 @@ pub const MARKDOWN_LIMIT_BYTES: usize = 1024 * 1024;
 /// middle of that save (a replace-style save deletes, then recreates).
 pub const OWN_SAVE_WINDOW: Duration = Duration::from_secs(2);
 
+/// How long a file must stay missing before it counts as deleted on disk:
+/// a delete-then-create save (another editor, `git checkout`) brings it back
+/// within this.
+pub const MISSING_GRACE: Duration = Duration::from_secs(1);
+
 /// Identifies a Tab for its whole life. Never reused.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct TabId(u64);
@@ -183,8 +188,8 @@ pub enum Action {
     /// Stop watching this file.
     Unwatch(PathBuf),
     /// Stat `path` again `after` this long and pass the result to
-    /// [`Tabs::disk_event`]: the file was missing just after scrivi's own
-    /// save, which may be that save in mid-replace.
+    /// [`Tabs::disk_event`]: the file is missing, but may be in the middle
+    /// of a delete-then-create save (scrivi's own or another program's).
     Recheck { path: PathBuf, after: Duration },
     /// Move this file to the top of the recent files.
     AddRecent(PathBuf),
@@ -206,7 +211,10 @@ pub struct Tab {
     /// The N in "Untitled N"; kept after a Save As, but then unused.
     untitled_number: u32,
     document: Option<EditorDoc>,
-    unsaved: bool,
+    /// Edits (or an encoding / line-ending choice) not yet in the file.
+    edited: bool,
+    /// The file was deleted on disk and is still gone.
+    missing: bool,
     view: View,
     notice: Option<Notice>,
     encoding: Encoding,
@@ -216,10 +224,16 @@ pub struct Tab {
     text_len: usize,
     /// Whether the file has been read into the Tab once.
     loaded: bool,
-    /// The file on disk as this Tab last knew it; `None` if it is missing.
-    disk: Option<FileStat>,
-    /// The file the last time it existed.
-    last_seen: Option<FileStat>,
+    /// The file as the Tab's text came from it: the last load or save.
+    /// Only `loaded` and `saved` move it.
+    loaded_stat: Option<FileStat>,
+    /// The latest file state the Tab acted on (reloaded for, or showed a
+    /// Notice for), so a repeated event does not act twice.
+    seen: Option<FileStat>,
+    /// The latest file state reported while the first load was running.
+    seen_while_loading: Option<Option<FileStat>>,
+    /// When the file was first reported missing, while it may yet return.
+    missing_since: Option<Instant>,
     /// When scrivi last saved this Tab, while that save's events may still
     /// be arriving.
     own_save: Option<Instant>,
@@ -269,9 +283,10 @@ impl Tab {
         }
     }
 
-    /// Has edits (or a Disk change or deletion) not yet written to the file.
+    /// Shows the unsaved dot and asks before closing: it has edits not yet
+    /// written, or its file was deleted on disk.
     pub fn unsaved(&self) -> bool {
-        self.unsaved
+        self.edited || self.missing
     }
 
     pub fn view(&self) -> View {
@@ -334,7 +349,7 @@ impl Tab {
     /// The file's size on disk, for the Large file Notice; `None` for an
     /// Untitled tab.
     pub fn file_size(&self) -> Option<u64> {
-        self.last_seen.map(|s| s.size)
+        self.loaded_stat.map(|s| s.size)
     }
 
     /// Back to the Source view if the Tab may no longer be rendered.
@@ -352,6 +367,31 @@ impl Tab {
             encoding,
             keep_caret_line: true,
         }
+    }
+
+    /// The file was reported missing at `now`: recheck until it has stayed
+    /// gone past [`MISSING_GRACE`] (and past [`OWN_SAVE_WINDOW`] after an own
+    /// save), then mark it deleted on disk.
+    fn file_missing(&mut self, now: Instant) -> Vec<Action> {
+        if self.missing {
+            return Vec::new();
+        }
+        let since = *self.missing_since.get_or_insert(now);
+        let mut deadline = since + MISSING_GRACE;
+        if let Some(saved_at) = self.own_save {
+            deadline = deadline.max(saved_at + OWN_SAVE_WINDOW);
+        }
+        if now < deadline {
+            let path = self.path.clone().expect("loaded Tabs have a path");
+            return vec![Action::Recheck {
+                path,
+                after: deadline - now,
+            }];
+        }
+        self.missing = true;
+        self.missing_since = None;
+        self.notice = Some(Notice::DeletedOnDisk);
+        vec![Action::Changed(self.id)]
     }
 
     fn write(&self, path: PathBuf) -> Action {
@@ -419,12 +459,20 @@ impl Tabs {
         let mut actions = Vec::new();
         for (i, path) in paths.iter().enumerate() {
             let last = i + 1 == paths.len();
-            if let Some(id) = self.find(path) {
+            if let Some(tab) = self.tabs.iter().find(|t| t.is_at(path)) {
+                let (id, loaded) = (tab.id, tab.loaded);
+                let known = tab.path.clone();
+                if !loaded {
+                    // `loaded` shows it and adds it to the recent files.
+                    if last {
+                        self.show_on_load = Some(id);
+                    }
+                    continue;
+                }
                 if last {
                     self.show_on_load = None;
                     actions.extend(self.activate(id));
                 }
-                let known = self.get(id).and_then(Tab::path).map(Path::to_path_buf);
                 actions.extend(known.map(Action::AddRecent));
                 continue;
             }
@@ -432,13 +480,14 @@ impl Tabs {
             if last {
                 self.show_on_load = Some(id);
             }
+            // Watch first, so a change during the load is not missed.
+            actions.push(Action::Watch(path.clone()));
             actions.push(Action::Load {
                 id,
                 path: path.clone(),
                 encoding: None,
                 keep_caret_line: false,
             });
-            actions.push(Action::Watch(path.clone()));
         }
         actions
     }
@@ -453,16 +502,24 @@ impl Tabs {
         tab.loaded = true;
         tab.encoding = file.encoding;
         tab.eol = file.eol;
-        tab.disk = Some(file.stat);
-        tab.last_seen = Some(file.stat);
+        tab.loaded_stat = Some(file.stat);
+        tab.seen = Some(file.stat);
+        tab.missing = false;
+        tab.missing_since = None;
         tab.text_len = file.text_len;
         tab.large = textfile::is_large(file.stat.size);
-        tab.unsaved = false;
+        tab.edited = false;
+        // A change reported while loading, and not in what was read.
+        let raced = tab
+            .seen_while_loading
+            .take()
+            .is_some_and(|latest| latest != Some(file.stat));
         let keep_large_notice = tab.notice == Some(Notice::LargeFile);
         tab.notice =
             (tab.large && (first || !was_large || keep_large_notice)).then_some(Notice::LargeFile);
         tab.fit_view();
         let path = tab.path.clone();
+        let reload = raced.then(|| tab.reread(None));
 
         let mut actions = vec![Action::Changed(id)];
         if self.show_on_load == Some(id) {
@@ -473,15 +530,24 @@ impl Tabs {
         if first {
             actions.extend(path.map(Action::AddRecent));
         }
+        actions.extend(reload);
         actions
     }
 
     /// `app` could not perform an [`Action::Load`]. A Tab that never loaded
     /// goes away (an Untitled tab takes the place of the last one, and if
-    /// nothing is shown the last Tab is); a Tab that already shows text keeps
-    /// it.
+    /// nothing is shown the last Tab is). A Tab that already shows text keeps
+    /// it; if the file on disk differs from that text, the Disk change Notice
+    /// offers the reread again rather than take the change as read.
     pub fn load_failed(&mut self, id: TabId) -> Vec<Action> {
-        if self.get(id).is_none_or(|t| t.loaded) {
+        let Some(tab) = self.tab_mut(id) else {
+            return Vec::new();
+        };
+        if tab.loaded {
+            if tab.seen.is_some() && tab.seen != tab.loaded_stat {
+                tab.notice = Some(Notice::DiskChange);
+                return vec![Action::Changed(id)];
+            }
             return Vec::new();
         }
         if self.show_on_load == Some(id) {
@@ -538,7 +604,7 @@ impl Tabs {
         let Some(tab) = self.get(id) else {
             return Vec::new();
         };
-        if tab.unsaved {
+        if tab.unsaved() {
             let mut actions = self.activate(id);
             actions.push(Action::AskSaveBeforeClose(id));
             return actions;
@@ -567,7 +633,7 @@ impl Tabs {
         let unsaved: Vec<TabId> = self
             .tabs
             .iter()
-            .filter(|t| t.unsaved)
+            .filter(|t| t.unsaved())
             .map(|t| t.id)
             .collect();
         if unsaved.is_empty() {
@@ -592,7 +658,7 @@ impl Tabs {
     }
 
     fn save_next_for_window(&mut self) -> Vec<Action> {
-        let Some(tab) = self.tabs.iter().find(|t| t.unsaved) else {
+        let Some(tab) = self.tabs.iter().find(|t| t.unsaved()) else {
             self.pending_close = None;
             return vec![Action::CloseWindow];
         };
@@ -613,10 +679,10 @@ impl Tabs {
         if tab.read_only() {
             return Vec::new();
         }
-        let before = (tab.unsaved, tab.styled());
-        tab.unsaved = true;
+        let before = (tab.unsaved(), tab.styled());
+        tab.edited = true;
         tab.text_len = text_len;
-        if (tab.unsaved, tab.styled()) == before {
+        if (tab.unsaved(), tab.styled()) == before {
             Vec::new()
         } else {
             vec![Action::Changed(id)]
@@ -695,9 +761,11 @@ impl Tabs {
             None => actions.push(Action::Watch(path.clone())),
         }
         tab.loaded = true;
-        tab.unsaved = false;
-        tab.disk = Some(stat);
-        tab.last_seen = Some(stat);
+        tab.edited = false;
+        tab.missing = false;
+        tab.missing_since = None;
+        tab.loaded_stat = Some(stat);
+        tab.seen = Some(stat);
         tab.own_save = Some(now);
         if matches!(tab.notice, Some(Notice::DiskChange | Notice::DeletedOnDisk)) {
             tab.notice = None;
@@ -720,16 +788,28 @@ impl Tabs {
     /// The watcher reported `path`, and `app` re-checked it: `on_disk` is
     /// its size and modified time now, `None` if it no longer exists.
     ///
-    /// Per Tab with that file: nothing if the file is as the Tab knows it
-    /// (which covers scrivi's own saves); a silent reload if the Tab has no
-    /// unsaved edits; otherwise the Disk change Notice. A missing file keeps
-    /// the text, marks it unsaved and shows the deleted-on-disk Notice; if
-    /// it comes back as it was, that Notice goes again.
+    /// Per Tab with that file:
+    /// - the file as the Tab's text came from it (which covers scrivi's own
+    ///   saves): nothing; if it had been deleted, it is back and the
+    ///   deleted-on-disk Notice goes;
+    /// - changed, with no unsaved edits: a silent reload;
+    /// - changed, with unsaved edits: the Disk change Notice;
+    /// - missing: [`Action::Recheck`] until it has stayed missing for
+    ///   [`MISSING_GRACE`] (a delete-then-create save brings it back sooner),
+    ///   then the text is kept, marked unsaved, with the deleted-on-disk
+    ///   Notice.
+    ///
+    /// A repeat of a state already acted on does nothing more. An event that
+    /// arrives while the first load runs is held, and `loaded` rereads if
+    /// the file moved on from what was read.
     ///
     /// The pending-save marker: within [`OWN_SAVE_WINDOW`] of scrivi's own
     /// save, and until a stat shows that save's size and modified time, a
-    /// missing file is taken for the save in mid-replace. It answers
-    /// [`Action::Recheck`] instead, so a real deletion still shows.
+    /// missing file is taken for the save in mid-replace and rechecked after
+    /// the window. Known limit: scrivi tells its own write from another by
+    /// size and modified time only, so another program's write with the same
+    /// size and time, or one that lands between scrivi's write and its stat,
+    /// goes unnoticed.
     pub fn disk_event(
         &mut self,
         path: &Path,
@@ -748,40 +828,32 @@ impl Tabs {
             return Vec::new();
         };
         if !tab.loaded {
+            tab.seen_while_loading = Some(on_disk);
             return Vec::new();
         }
-        if on_disk == tab.disk {
-            if on_disk.is_some() {
-                tab.own_save = None;
+        let Some(stat) = on_disk else {
+            return tab.file_missing(now);
+        };
+        tab.missing_since = None;
+        if Some(stat) == tab.loaded_stat {
+            tab.own_save = None;
+            tab.seen = Some(stat);
+            if !tab.missing {
+                return Vec::new();
             }
-            return Vec::new();
-        }
-        let own_save_landing = tab
-            .own_save
-            .is_some_and(|at| now.saturating_duration_since(at) < OWN_SAVE_WINDOW);
-        if on_disk.is_none() && own_save_landing {
-            let path = tab.path.clone().expect("loaded Tabs have a path");
-            return vec![Action::Recheck {
-                path,
-                after: OWN_SAVE_WINDOW,
-            }];
-        }
-        let back_as_it_was = tab.disk.is_none() && on_disk == tab.last_seen;
-        tab.disk = on_disk;
-        if on_disk.is_some() {
-            tab.last_seen = on_disk;
-        }
-        if back_as_it_was {
-            // Still unsaved: the edits, if any, are still not in the file.
+            // Back as it was: unsaved again only if it has edits.
+            tab.missing = false;
             if tab.notice == Some(Notice::DeletedOnDisk) {
                 tab.notice = None;
             }
-            vec![Action::Changed(id)]
-        } else if on_disk.is_none() {
-            tab.unsaved = true;
-            tab.notice = Some(Notice::DeletedOnDisk);
-            vec![Action::Changed(id)]
-        } else if tab.unsaved {
+            return vec![Action::Changed(id)];
+        }
+        let was_missing = std::mem::take(&mut tab.missing);
+        if Some(stat) == tab.seen && !was_missing {
+            return Vec::new();
+        }
+        tab.seen = Some(stat);
+        if tab.edited {
             tab.notice = Some(Notice::DiskChange);
             vec![Action::Changed(id)]
         } else {
@@ -817,7 +889,7 @@ impl Tabs {
             return Vec::new();
         }
         tab.eol = eol;
-        tab.unsaved = true;
+        tab.edited = true;
         vec![Action::ConvertEol { id, eol }, Action::Changed(id)]
     }
 
@@ -831,7 +903,7 @@ impl Tabs {
             return Vec::new();
         }
         tab.encoding = encoding;
-        tab.unsaved = true;
+        tab.edited = true;
         vec![Action::Changed(id)]
     }
 
@@ -840,7 +912,7 @@ impl Tabs {
     pub fn reopen_with_encoding(&mut self, id: TabId, encoding: Encoding) -> Vec<Action> {
         match self.get(id) {
             Some(tab) if tab.is_untitled() => Vec::new(),
-            Some(tab) if tab.unsaved => vec![Action::AskDiscardForReopen { id, encoding }],
+            Some(tab) if tab.unsaved() => vec![Action::AskDiscardForReopen { id, encoding }],
             Some(_) => self.reopen_confirmed(id, encoding),
             None => Vec::new(),
         }
@@ -937,7 +1009,9 @@ impl Tabs {
             document: tab.document,
         }];
         if let Some(path) = tab.path {
-            actions.push(Action::Unwatch(path));
+            if self.find(&path).is_none() {
+                actions.push(Action::Unwatch(path));
+            }
         }
         if self.tabs.is_empty() {
             self.active = None;
@@ -958,7 +1032,8 @@ impl Tabs {
             path,
             untitled_number,
             document: None,
-            unsaved: false,
+            edited: false,
+            missing: false,
             view: View::Source,
             notice: None,
             encoding: textfile::NEW_FILE.0,
@@ -966,8 +1041,10 @@ impl Tabs {
             large: false,
             text_len: 0,
             loaded: false,
-            disk: None,
-            last_seen: None,
+            loaded_stat: None,
+            seen: None,
+            seen_while_loading: None,
+            missing_since: None,
             own_save: None,
         });
         id

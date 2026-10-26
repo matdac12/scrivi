@@ -51,20 +51,20 @@ fn open_sized(tabs: &mut Tabs, p: &str, size: u64) -> TabId {
 // --- §3 Opening files -----------------------------------------------------
 
 #[test]
-fn opening_a_path_adds_a_tab_that_loads_and_watches_the_file() {
+fn opening_a_path_adds_a_tab_that_watches_the_file_before_loading_it() {
     let mut tabs = Tabs::new();
     let actions = tabs.open(&[path(r"C:\notes\todo.md")]);
     let id = added(&actions);
     assert_eq!(
         actions,
         [
+            Action::Watch(path(r"C:\notes\todo.md")),
             Action::Load {
                 id,
                 path: path(r"C:\notes\todo.md"),
                 encoding: None,
                 keep_caret_line: false,
             },
-            Action::Watch(path(r"C:\notes\todo.md")),
         ]
     );
     assert_eq!(names(&tabs), ["todo.md"]);
@@ -739,24 +739,86 @@ fn disk_events_for_files_not_open_do_nothing() {
     assert_eq!(tabs.disk_event(&path(r"C:\other.md"), None, t0()), []);
 }
 
+#[test]
+fn a_failed_automatic_reload_shows_the_disk_change_notice_instead_of_taking_the_change_as_read() {
+    let mut tabs = Tabs::new();
+    let id = open_file(&mut tabs, r"C:\a.md");
+    tabs.disk_event(&path(r"C:\a.md"), changed_on_disk(), t0());
+    assert_eq!(tabs.load_failed(id), [Action::Changed(id)]);
+    assert_eq!(tabs.get(id).unwrap().notice(), Some(Notice::DiskChange));
+    // Its Reload button tries again.
+    assert_eq!(
+        tabs.notice_action(id, NoticeAction::Reload),
+        [reload(id, r"C:\a.md")]
+    );
+}
+
+#[test]
+fn a_later_change_after_a_failed_automatic_reload_reloads_again() {
+    let mut tabs = Tabs::new();
+    let id = open_file(&mut tabs, r"C:\a.md");
+    tabs.disk_event(&path(r"C:\a.md"), changed_on_disk(), t0());
+    tabs.load_failed(id);
+    assert_eq!(
+        tabs.disk_event(&path(r"C:\a.md"), Some(stat(43, 301)), t0()),
+        [reload(id, r"C:\a.md")]
+    );
+}
+
 // --- §8 File deleted or renamed on disk -----------------------------------
+
+/// Reports `p` missing, then still missing once the grace has passed.
+fn delete_on_disk(tabs: &mut Tabs, p: &str) -> Vec<Action> {
+    let now = t0();
+    tabs.disk_event(&path(p), None, now);
+    tabs.disk_event(&path(p), None, now + MISSING_GRACE)
+}
+
+#[test]
+fn a_missing_file_is_rechecked_before_it_counts_as_deleted() {
+    let mut tabs = Tabs::new();
+    let id = open_file(&mut tabs, r"C:\a.md");
+    assert_eq!(
+        tabs.disk_event(&path(r"C:\a.md"), None, t0()),
+        [Action::Recheck {
+            path: path(r"C:\a.md"),
+            after: MISSING_GRACE
+        }]
+    );
+    let tab = tabs.get(id).unwrap();
+    assert!(!tab.unsaved());
+    assert_eq!(tab.notice(), None);
+}
 
 #[test]
 fn a_file_deleted_on_disk_keeps_its_text_marked_unsaved_with_the_deleted_notice() {
     let mut tabs = Tabs::new();
     let id = open_file(&mut tabs, r"C:\a.md");
-    let actions = tabs.disk_event(&path(r"C:\a.md"), None, t0());
-    assert_eq!(actions, [Action::Changed(id)]);
+    assert_eq!(delete_on_disk(&mut tabs, r"C:\a.md"), [Action::Changed(id)]);
     let tab = tabs.get(id).unwrap();
     assert!(tab.unsaved());
     assert_eq!(tab.notice(), Some(Notice::DeletedOnDisk));
 }
 
 #[test]
-fn save_on_the_deleted_notice_writes_the_file_again_at_its_old_path() {
+fn a_file_replaced_by_delete_then_create_reloads_a_tab_without_edits_silently() {
     let mut tabs = Tabs::new();
     let id = open_file(&mut tabs, r"C:\a.md");
     tabs.disk_event(&path(r"C:\a.md"), None, t0());
+    assert_eq!(
+        tabs.disk_event(&path(r"C:\a.md"), changed_on_disk(), t0()),
+        [reload(id, r"C:\a.md")]
+    );
+    let tab = tabs.get(id).unwrap();
+    assert!(!tab.unsaved());
+    assert_eq!(tab.notice(), None);
+}
+
+#[test]
+fn save_on_the_deleted_notice_writes_the_file_again_at_its_old_path() {
+    let mut tabs = Tabs::new();
+    let id = open_file(&mut tabs, r"C:\a.md");
+    delete_on_disk(&mut tabs, r"C:\a.md");
     assert_eq!(
         tabs.notice_action(id, NoticeAction::Save),
         [Action::Write {
@@ -771,19 +833,36 @@ fn save_on_the_deleted_notice_writes_the_file_again_at_its_old_path() {
 }
 
 #[test]
-fn a_deleted_file_that_comes_back_changed_shows_the_disk_change_notice() {
+fn a_deleted_file_that_comes_back_changed_reloads_a_tab_without_edits() {
     let mut tabs = Tabs::new();
     let id = open_file(&mut tabs, r"C:\a.md");
-    tabs.disk_event(&path(r"C:\a.md"), None, t0());
+    delete_on_disk(&mut tabs, r"C:\a.md");
+    assert_eq!(
+        tabs.disk_event(&path(r"C:\a.md"), changed_on_disk(), t0()),
+        [reload(id, r"C:\a.md")]
+    );
+    tabs.loaded(id, file(42));
+    let tab = tabs.get(id).unwrap();
+    assert!(!tab.unsaved());
+    assert_eq!(tab.notice(), None);
+}
+
+#[test]
+fn a_deleted_file_that_comes_back_changed_under_edits_shows_the_disk_change_notice() {
+    let mut tabs = Tabs::new();
+    let id = edited_file(&mut tabs, r"C:\a.md");
+    delete_on_disk(&mut tabs, r"C:\a.md");
     tabs.disk_event(&path(r"C:\a.md"), changed_on_disk(), t0());
-    assert_eq!(tabs.get(id).unwrap().notice(), Some(Notice::DiskChange));
+    let tab = tabs.get(id).unwrap();
+    assert_eq!(tab.notice(), Some(Notice::DiskChange));
+    assert!(tab.unsaved());
 }
 
 #[test]
 fn notice_buttons_that_do_not_belong_to_the_shown_notice_do_nothing() {
     let mut tabs = Tabs::new();
     let id = open_file(&mut tabs, r"C:\a.md");
-    tabs.disk_event(&path(r"C:\a.md"), None, t0());
+    delete_on_disk(&mut tabs, r"C:\a.md");
     assert_eq!(tabs.notice_action(id, NoticeAction::Reload), []);
     assert_eq!(tabs.notice_action(id, NoticeAction::KeepMine), []);
     assert_eq!(tabs.get(id).unwrap().notice(), Some(Notice::DeletedOnDisk));
@@ -817,7 +896,7 @@ fn a_replace_style_own_save_absorbs_the_file_briefly_missing() {
         tabs.disk_event(&path(r"C:\a.md"), None, soon),
         [Action::Recheck {
             path: path(r"C:\a.md"),
-            after: OWN_SAVE_WINDOW
+            after: OWN_SAVE_WINDOW - Duration::from_millis(300)
         }]
     );
     assert_eq!(
@@ -830,24 +909,39 @@ fn a_replace_style_own_save_absorbs_the_file_briefly_missing() {
 }
 
 #[test]
-fn a_file_missing_after_the_own_save_window_is_deleted_on_disk() {
+fn after_the_own_save_window_a_missing_file_gets_only_the_usual_grace() {
     let mut tabs = Tabs::new();
     let id = open_file(&mut tabs, r"C:\a.md");
     let now = t0();
     tabs.saved(id, path(r"C:\a.md"), stat(11, 500), now);
     let late = now + OWN_SAVE_WINDOW + Duration::from_millis(1);
-    tabs.disk_event(&path(r"C:\a.md"), None, late);
+    assert_eq!(
+        tabs.disk_event(&path(r"C:\a.md"), None, late),
+        [Action::Recheck {
+            path: path(r"C:\a.md"),
+            after: MISSING_GRACE
+        }]
+    );
+    tabs.disk_event(&path(r"C:\a.md"), None, late + MISSING_GRACE);
     assert_eq!(tabs.get(id).unwrap().notice(), Some(Notice::DeletedOnDisk));
 }
 
 #[test]
-fn once_a_stat_shows_the_own_save_a_missing_file_is_deleted_on_disk() {
+fn once_a_stat_shows_the_own_save_a_missing_file_gets_only_the_usual_grace() {
     let mut tabs = Tabs::new();
     let id = open_file(&mut tabs, r"C:\a.md");
     let now = t0();
     tabs.saved(id, path(r"C:\a.md"), stat(11, 500), now);
     tabs.disk_event(&path(r"C:\a.md"), Some(stat(11, 500)), now);
-    tabs.disk_event(&path(r"C:\a.md"), None, now + Duration::from_millis(100));
+    let soon = now + Duration::from_millis(100);
+    assert_eq!(
+        tabs.disk_event(&path(r"C:\a.md"), None, soon),
+        [Action::Recheck {
+            path: path(r"C:\a.md"),
+            after: MISSING_GRACE
+        }]
+    );
+    tabs.disk_event(&path(r"C:\a.md"), None, soon + MISSING_GRACE);
     assert_eq!(tabs.get(id).unwrap().notice(), Some(Notice::DeletedOnDisk));
 }
 
@@ -1321,13 +1415,68 @@ fn the_large_file_notice_can_show_the_file_size() {
 }
 
 #[test]
-fn a_deleted_file_that_comes_back_unchanged_drops_the_deleted_notice() {
+fn a_deleted_file_that_comes_back_as_it_was_leaves_a_tab_without_edits_clean() {
     let mut tabs = Tabs::new();
     let id = open_file(&mut tabs, r"C:\a.md");
-    tabs.disk_event(&path(r"C:\a.md"), None, t0());
+    delete_on_disk(&mut tabs, r"C:\a.md");
     assert_eq!(
         tabs.disk_event(&path(r"C:\a.md"), as_loaded(), t0()),
         [Action::Changed(id)]
     );
-    assert_eq!(tabs.get(id).unwrap().notice(), None);
+    let tab = tabs.get(id).unwrap();
+    assert_eq!(tab.notice(), None);
+    assert!(!tab.unsaved());
+}
+
+#[test]
+fn a_deleted_file_that_comes_back_as_it_was_keeps_the_edits_unsaved() {
+    let mut tabs = Tabs::new();
+    let id = edited_file(&mut tabs, r"C:\a.md");
+    delete_on_disk(&mut tabs, r"C:\a.md");
+    tabs.disk_event(&path(r"C:\a.md"), as_loaded(), t0());
+    let tab = tabs.get(id).unwrap();
+    assert_eq!(tab.notice(), None);
+    assert!(tab.unsaved());
+}
+
+// --- Watching and loading -------------------------------------------------
+
+#[test]
+fn a_change_seen_while_the_file_was_loading_reloads_it_once_loaded() {
+    let mut tabs = Tabs::new();
+    let id = added(&tabs.open(&[path(r"C:\a.md")]));
+    assert_eq!(
+        tabs.disk_event(&path(r"C:\a.md"), changed_on_disk(), t0()),
+        []
+    );
+    let actions = tabs.loaded(id, file(10));
+    assert!(actions.contains(&reload(id, r"C:\a.md")));
+    // The reload's own load does not start another.
+    assert!(!tabs.loaded(id, file(42)).contains(&reload(id, r"C:\a.md")));
+}
+
+#[test]
+fn a_change_seen_while_loading_that_the_load_already_read_needs_no_reload() {
+    let mut tabs = Tabs::new();
+    let id = added(&tabs.open(&[path(r"C:\a.md")]));
+    tabs.disk_event(&path(r"C:\a.md"), as_loaded(), t0());
+    assert!(!tabs.loaded(id, file(10)).contains(&reload(id, r"C:\a.md")));
+}
+
+#[test]
+fn opening_a_path_whose_tab_is_still_loading_shows_it_once_loaded() {
+    let mut tabs = Tabs::new();
+    let actions = tabs.open(&[path(r"C:\a.md"), path(r"C:\A.MD")]);
+    let id = added(&actions);
+    assert_eq!(actions.len(), 2, "{actions:?}");
+    assert_eq!(tabs.open(&[path(r"C:\a.md")]), []);
+    let actions = tabs.loaded(id, file(10));
+    assert_eq!(
+        actions,
+        [
+            Action::Changed(id),
+            Action::Activate(id),
+            Action::AddRecent(path(r"C:\a.md")),
+        ]
+    );
 }
