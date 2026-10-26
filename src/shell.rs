@@ -7,7 +7,9 @@
 use std::path::Path;
 
 use windows::core::{w, PCWSTR};
-use windows::Win32::Foundation::{ERROR_FILE_NOT_FOUND, ERROR_PATH_NOT_FOUND, ERROR_SUCCESS};
+use windows::Win32::Foundation::{
+    ERROR_FILE_NOT_FOUND, ERROR_PATH_NOT_FOUND, ERROR_SUCCESS, HINSTANCE,
+};
 use windows::Win32::System::Registry::{
     RegCloseKey, RegDeleteKeyValueW, RegDeleteKeyW, RegOpenKeyExW, RegQueryInfoKeyW,
     RegSetKeyValueW, HKEY, HKEY_CURRENT_USER, KEY_READ, REG_SZ,
@@ -39,53 +41,63 @@ pub const EXTENSIONS: &[&str] = &[
     ".",
 ];
 
-/// One registry value: (key below HKCU, value name or "" for the default, string data).
-pub type PlanEntry = (String, String, String);
+/// One registry value to write, all below HKCU.
+#[derive(Clone, Debug)]
+pub struct PlanEntry {
+    /// Key below HKCU.
+    pub key: String,
+    /// Value name; empty for the key's default value.
+    pub name: String,
+    /// String data.
+    pub data: String,
+}
+
+impl PlanEntry {
+    fn new(key: impl Into<String>, name: impl Into<String>, data: impl Into<String>) -> Self {
+        Self {
+            key: key.into(),
+            name: name.into(),
+            data: data.into(),
+        }
+    }
+}
 
 /// Everything `--register` writes, all below HKCU.
 pub fn registry_plan(exe: &Path) -> Vec<PlanEntry> {
     let exe = exe.display();
     let prog = format!(r"Software\Classes\{PROG_ID}");
-    let mut plan: Vec<PlanEntry> = vec![
-        (prog.clone(), "".into(), "Text file (scrivi)".into()),
-        (
-            format!(r"{prog}\DefaultIcon"),
-            "".into(),
-            format!("\"{exe}\",0"),
-        ),
-        (
+    let mut plan = vec![
+        PlanEntry::new(prog.as_str(), "", "Text file (scrivi)"),
+        PlanEntry::new(format!(r"{prog}\DefaultIcon"), "", format!("\"{exe}\",0")),
+        PlanEntry::new(
             format!(r"{prog}\shell\open\command"),
-            "".into(),
+            "",
             format!("\"{exe}\" \"%1\""),
         ),
         // Explorer's Edit verb comes from the default ProgID's shell\edit.
-        (
+        PlanEntry::new(
             format!(r"{prog}\shell\edit\command"),
-            "".into(),
+            "",
             format!("\"{exe}\" \"%1\""),
         ),
-        (
-            CAPABILITIES.into(),
-            "ApplicationName".into(),
-            APP_NAME.into(),
+        PlanEntry::new(CAPABILITIES, "ApplicationName", APP_NAME),
+        PlanEntry::new(
+            CAPABILITIES,
+            "ApplicationDescription",
+            "A minimal text editor that replaces Notepad.",
         ),
-        (
-            CAPABILITIES.into(),
-            "ApplicationDescription".into(),
-            "A minimal text editor that replaces Notepad.".into(),
-        ),
-        (REGISTERED_APPS.into(), APP_NAME.into(), CAPABILITIES.into()),
+        PlanEntry::new(REGISTERED_APPS, APP_NAME, CAPABILITIES),
     ];
     for ext in EXTENSIONS {
-        plan.push((
+        plan.push(PlanEntry::new(
             format!(r"{CAPABILITIES}\FileAssociations"),
-            (*ext).into(),
-            PROG_ID.into(),
+            *ext,
+            PROG_ID,
         ));
-        plan.push((
+        plan.push(PlanEntry::new(
             format!(r"Software\Classes\{ext}\OpenWithProgids"),
-            PROG_ID.into(),
-            "".into(),
+            PROG_ID,
+            "",
         ));
     }
     plan
@@ -93,6 +105,24 @@ pub fn registry_plan(exe: &Path) -> Vec<PlanEntry> {
 
 fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
+}
+
+/// A registry value name in the form the API takes: the default value (empty
+/// name) is a null pointer, any other name points into the kept UTF-16 buffer.
+struct ValueName(Vec<u16>);
+
+impl ValueName {
+    fn new(name: &str) -> Self {
+        Self(wide(name))
+    }
+
+    fn as_pcwstr(&self) -> PCWSTR {
+        if self.0.len() > 1 {
+            PCWSTR(self.0.as_ptr())
+        } else {
+            PCWSTR::null()
+        }
+    }
 }
 
 fn join(prefix: &str, key: &str) -> String {
@@ -105,18 +135,14 @@ fn join(prefix: &str, key: &str) -> String {
 
 /// Writes the plan below `HKCU\<prefix>` (empty prefix = the real registry).
 pub fn apply(prefix: &str, plan: &[PlanEntry]) -> Result<(), String> {
-    for (key, name, data) in plan {
-        let (k, n, d) = (wide(&join(prefix, key)), wide(name), wide(data));
-        let name_ptr = if name.is_empty() {
-            PCWSTR::null()
-        } else {
-            PCWSTR(n.as_ptr())
-        };
+    for entry in plan {
+        let (key, name, data) = (entry.key.as_str(), &entry.name, &entry.data);
+        let (k, n, d) = (wide(&join(prefix, key)), ValueName::new(name), wide(data));
         let err = unsafe {
             RegSetKeyValueW(
                 HKEY_CURRENT_USER,
                 PCWSTR(k.as_ptr()),
-                name_ptr,
+                n.as_pcwstr(),
                 REG_SZ.0,
                 Some(d.as_ptr().cast()),
                 (d.len() * 2) as u32,
@@ -171,23 +197,23 @@ fn shared(key: &str) -> bool {
 }
 
 /// Removes exactly the values the plan writes, then every key it created that
-/// is now empty (deepest first). Other apps' values and keys stay.
+/// is now empty (deepest first). Other apps' values and keys stay. Every entry
+/// is attempted; the errors are returned together.
 pub fn remove(prefix: &str, plan: &[PlanEntry]) -> Result<(), String> {
     let mut keys: Vec<&str> = Vec::new();
-    for (key, name, _) in plan {
-        let (k, n) = (wide(&join(prefix, key)), wide(name));
-        let name_ptr = if name.is_empty() {
-            PCWSTR::null()
-        } else {
-            PCWSTR(n.as_ptr())
-        };
-        let err = unsafe { RegDeleteKeyValueW(HKEY_CURRENT_USER, PCWSTR(k.as_ptr()), name_ptr) };
+    let mut errors: Vec<String> = Vec::new();
+    for entry in plan {
+        let key = entry.key.as_str();
+        let (k, n) = (wide(&join(prefix, key)), ValueName::new(&entry.name));
+        let err =
+            unsafe { RegDeleteKeyValueW(HKEY_CURRENT_USER, PCWSTR(k.as_ptr()), n.as_pcwstr()) };
         // A missing key reports PATH_NOT_FOUND, a missing value FILE_NOT_FOUND.
         if err != ERROR_SUCCESS && err != ERROR_FILE_NOT_FOUND && err != ERROR_PATH_NOT_FOUND {
-            return Err(format!("removing {key}: error {}", err.0));
+            errors.push(format!("removing {key}: error {}", err.0));
+            continue;
         }
         // The key and each ancestor are candidates for pruning.
-        let mut cur = key.as_str();
+        let mut cur = key;
         loop {
             if !keys.contains(&cur) {
                 keys.push(cur);
@@ -208,11 +234,15 @@ pub fn remove(prefix: &str, plan: &[PlanEntry]) -> Result<(), String> {
             let k = wide(&full);
             let err = unsafe { RegDeleteKeyW(HKEY_CURRENT_USER, PCWSTR(k.as_ptr())) };
             if err != ERROR_SUCCESS {
-                return Err(format!("deleting {key}: error {}", err.0));
+                errors.push(format!("deleting {key}: error {}", err.0));
             }
         }
     }
-    Ok(())
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors.join("; "))
+    }
 }
 
 /// Debug builds only: `SCRIVI_TEST_REGISTRY_PREFIX` redirects --register and
@@ -247,7 +277,7 @@ pub fn register() -> i32 {
         return fail(&e);
     }
     notify_assoc_changed();
-    unsafe {
+    let opened = unsafe {
         ShellExecuteW(
             None,
             w!("open"),
@@ -255,9 +285,22 @@ pub fn register() -> i32 {
             PCWSTR::null(),
             PCWSTR::null(),
             SW_SHOWNORMAL,
-        );
+        )
+    };
+    match shell_execute_result(opened) {
+        Ok(()) => 0,
+        Err(e) => fail(&e),
     }
-    0
+}
+
+/// `ShellExecuteW` reports success as a handle above 32, or an error code.
+fn shell_execute_result(opened: HINSTANCE) -> Result<(), String> {
+    let code = opened.0 as isize;
+    if code > 32 {
+        Ok(())
+    } else {
+        Err(format!("opening Default apps: error {code}"))
+    }
 }
 
 /// `--unregister`: remove exactly what `--register` wrote.
@@ -297,8 +340,8 @@ mod tests {
 
     fn find<'a>(plan: &'a [PlanEntry], key: &str, name: &str) -> Option<&'a str> {
         plan.iter()
-            .find(|(k, n, _)| k == key && n == name)
-            .map(|(_, _, d)| d.as_str())
+            .find(|e| e.key == key && e.name == name)
+            .map(|e| e.data.as_str())
     }
 
     #[test]
@@ -308,7 +351,7 @@ mod tests {
         assert_eq!(
             find(
                 &plan,
-                r"Software\Classes\Scrivi.TextFile\shell\open\command",
+                &format!(r"Software\Classes\{PROG_ID}\shell\open\command"),
                 ""
             ),
             Some(want)
@@ -316,13 +359,17 @@ mod tests {
         assert_eq!(
             find(
                 &plan,
-                r"Software\Classes\Scrivi.TextFile\shell\edit\command",
+                &format!(r"Software\Classes\{PROG_ID}\shell\edit\command"),
                 ""
             ),
             Some(want)
         );
         assert_eq!(
-            find(&plan, r"Software\Classes\Scrivi.TextFile\DefaultIcon", ""),
+            find(
+                &plan,
+                &format!(r"Software\Classes\{PROG_ID}\DefaultIcon"),
+                ""
+            ),
             Some(r#""C:\Apps\scrivi\scrivi.exe",0"#)
         );
     }
@@ -333,13 +380,13 @@ mod tests {
         for ext in EXTENSIONS {
             assert_eq!(
                 find(&plan, r"Software\Scrivi\Capabilities\FileAssociations", ext),
-                Some("Scrivi.TextFile")
+                Some(PROG_ID)
             );
             assert_eq!(
                 find(
                     &plan,
                     &format!(r"Software\Classes\{ext}\OpenWithProgids"),
-                    "Scrivi.TextFile"
+                    PROG_ID
                 ),
                 Some("")
             );
@@ -386,7 +433,8 @@ mod tests {
     #[test]
     fn plan_never_touches_user_choice_hashes_or_extension_defaults() {
         let plan = registry_plan(&exe());
-        for (key, name, _) in &plan {
+        for entry in &plan {
+            let (key, name) = (&entry.key, &entry.name);
             assert!(key.starts_with(r"Software\"), "{key}");
             assert!(
                 !key.contains("UserChoice") && !key.contains("FileExts"),
@@ -401,7 +449,17 @@ mod tests {
         let mut seen = std::collections::HashSet::new();
         assert!(plan
             .iter()
-            .all(|(k, n, _)| seen.insert((k.clone(), n.clone()))));
+            .all(|e| seen.insert((e.key.clone(), e.name.clone()))));
+    }
+
+    #[test]
+    fn shell_execute_result_is_an_error_only_up_to_32() {
+        assert_eq!(
+            shell_execute_result(HINSTANCE(42isize as *mut core::ffi::c_void)),
+            Ok(())
+        );
+        let err = shell_execute_result(HINSTANCE(5isize as *mut core::ffi::c_void)).unwrap_err();
+        assert!(err.contains('5'), "{err}");
     }
 
     // --- registry round trips, in a throwaway HKCU subtree ---
@@ -423,19 +481,14 @@ mod tests {
     }
 
     fn read(full_key: &str, name: &str) -> Option<String> {
-        let (k, n) = (wide(full_key), wide(name));
-        let name_ptr = if name.is_empty() {
-            PCWSTR::null()
-        } else {
-            PCWSTR(n.as_ptr())
-        };
+        let (k, n) = (wide(full_key), ValueName::new(name));
         let mut buf = [0u16; 512];
         let mut len = std::mem::size_of_val(&buf) as u32;
         let err = unsafe {
             RegGetValueW(
                 HKEY_CURRENT_USER,
                 PCWSTR(k.as_ptr()),
-                name_ptr,
+                n.as_pcwstr(),
                 RRF_RT_REG_SZ,
                 None,
                 Some(buf.as_mut_ptr().cast()),
@@ -455,7 +508,7 @@ mod tests {
         let applied = apply(&root, &plan);
         let written: Vec<_> = plan
             .iter()
-            .map(|(k, n, d)| read(&join(&root, k), n).as_deref() == Some(d.as_str()))
+            .map(|e| read(&join(&root, &e.key), &e.name).as_deref() == Some(e.data.as_str()))
             .collect();
         let removed = remove(&root, &plan);
         // Nothing may remain below the scratch root, not even empty keys.
@@ -470,17 +523,58 @@ mod tests {
         );
     }
 
+    // A key name over the registry's 255-character limit, so touching it fails
+    // with a real error instead of "not found".
+    fn unreachable_key(tag: &str) -> String {
+        format!(r"Software\ScriviTest-{}-{tag}", "x".repeat(300))
+    }
+
+    #[test]
+    fn remove_removes_the_rest_when_an_entry_fails() {
+        let root = scratch();
+        let plan = registry_plan(&exe());
+        apply(&root, &plan).unwrap();
+        let bad = PlanEntry::new(unreachable_key("a"), "", "x");
+        let mut broken = plan.clone();
+        broken.insert(0, bad.clone());
+        let err = remove(&root, &broken).unwrap_err();
+        let left = counts(&root);
+        delete_tree(&root);
+        assert!(err.contains(bad.key.as_str()), "{err}");
+        // The entries after the failing one are still removed.
+        assert!(
+            left.is_none() || left == Some((0, 0)),
+            "left behind: {left:?}"
+        );
+    }
+
+    #[test]
+    fn remove_reports_every_error() {
+        let root = scratch();
+        let plan = registry_plan(&exe());
+        apply(&root, &plan).unwrap();
+        let first = PlanEntry::new(unreachable_key("a"), "", "");
+        let second = PlanEntry::new(unreachable_key("b"), "", "");
+        let mut broken = plan.clone();
+        broken.push(first.clone());
+        broken.push(second.clone());
+        let err = remove(&root, &broken).unwrap_err();
+        delete_tree(&root);
+        assert!(err.contains(first.key.as_str()), "{err}");
+        assert!(err.contains(second.key.as_str()), "{err}");
+    }
+
     #[test]
     fn remove_keeps_other_apps_values_and_keys() {
         let root = scratch();
         let plan = registry_plan(&exe());
         let key = r"Software\Classes\.txt\OpenWithProgids";
-        let other = vec![(key.to_string(), "Other.App".to_string(), String::new())];
+        let other = vec![PlanEntry::new(key, "Other.App", "")];
         apply(&root, &plan).unwrap();
         apply(&root, &other).unwrap();
         remove(&root, &plan).unwrap();
         let kept = read(&join(&root, key), "Other.App");
-        let gone = read(&join(&root, key), "Scrivi.TextFile");
+        let gone = read(&join(&root, key), PROG_ID);
         delete_tree(&root);
         assert_eq!(kept.as_deref(), Some(""));
         assert_eq!(gone, None);
