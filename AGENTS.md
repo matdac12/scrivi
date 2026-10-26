@@ -18,3 +18,16 @@ Rules for anyone (human or agent) changing this repo.
 - **Reference branches** (never merged): `research/borrowable-code`,
   `research/webview2-on-demand`, `prototype/scintilla-source-view`,
   `prototype/window-look`.
+
+- **Releases:** push a `vX.Y.Z` tag equal to the `Cargo.toml` version, with
+  `CHANGELOG.md` updated in the same commit; `release.yml` builds and
+  publishes. Steps in the README's *Releasing* section. Releases are unsigned.
+  Never move or re-push a published tag; cut a new patch version instead.
+
+## Checks (CI runs the same three on `windows-latest`)
+
+```
+cargo build --release
+cargo clippy --all-targets -- -D warnings
+cargo test
+```
