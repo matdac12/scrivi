@@ -421,7 +421,7 @@ impl Drop for Painter {
     }
 }
 
-/// The title row, then the Notice and find-bar bands (empty until 10-12).
+/// The title row, then the Notice band and the find-bar band (empty until 12).
 fn draw_top(p: &Pass, v: &View, painter: &Painter) -> Result<()> {
     let l = v.layout;
     let f = p.fonts;

@@ -3,15 +3,11 @@
 
 use super::{command, App};
 use crate::chrome::notice::{self, Spec};
-use crate::tabs::{Tab, Tabs};
+use crate::tabs::Tabs;
 
 /// The Notice the active Tab shows, if any.
 pub fn spec(tabs: &Tabs) -> Option<Spec> {
     let tab = tabs.active().and_then(|id| tabs.get(id))?;
-    spec_of(tab)
-}
-
-fn spec_of(tab: &Tab) -> Option<Spec> {
     Some(notice::for_tab(tab.notice()?, &tab.name(), tab.file_size()))
 }
 
