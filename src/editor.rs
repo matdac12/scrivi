@@ -37,6 +37,7 @@ pub mod sci {
     pub const SCI_CONVERTEOLS: u32 = 2029;
     pub const SCI_SETEOLMODE: u32 = 2031;
     pub const SCI_STARTSTYLING: u32 = 2032;
+    pub const SCI_SETSTYLING: u32 = 2033;
     pub const SCI_SETBUFFEREDDRAW: u32 = 2035;
     pub const SCI_SETTABWIDTH: u32 = 2036;
     pub const SCI_SETCODEPAGE: u32 = 2037;
@@ -153,7 +154,7 @@ const CARET_LINE: u32 = 0xF4F6FB;
 const SELECTION: u32 = 0xCFE0FF;
 
 /// 0xRRGGBB to Scintilla's 0xBBGGRR.
-const fn rgb(c: u32) -> isize {
+pub(crate) const fn rgb(c: u32) -> isize {
     (((c & 0xFF) << 16) | (c & 0xFF00) | ((c >> 16) & 0xFF)) as isize
 }
 
@@ -247,7 +248,7 @@ impl Editor {
         self.hwnd
     }
 
-    fn call(&self, msg: u32, w: usize, l: isize) -> isize {
+    pub(crate) fn call(&self, msg: u32, w: usize, l: isize) -> isize {
         unsafe { (self.func)(self.ptr, msg, w, l) }
     }
 
@@ -294,6 +295,9 @@ impl Editor {
         self.call(SCI_SETWRAPMODE, SC_WRAP_WORD, 0);
         self.call(SCI_SETWRAPINDENTMODE, SC_WRAPINDENT_SAME, 0);
         self.call(SCI_SETHSCROLLBAR, 0, 0);
+
+        // After STYLECLEARALL above, which would wipe them.
+        crate::mdview::define(self);
     }
 
     /// Everything Scintilla takes in raw pixels. Call once the control has seen
