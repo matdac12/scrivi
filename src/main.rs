@@ -15,7 +15,6 @@ mod textfile;
 mod watch;
 
 fn main() {
-    // Only parses args for now; `launch` will decide what they mean.
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let _ = args;
+    std::process::exit(launch::run(&args));
 }
