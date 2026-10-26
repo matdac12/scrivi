@@ -1,7 +1,7 @@
 //! Spell check in the Source view (spec §5): squiggles under flagged words in
 //! the visible lines plus a margin, and the right-click menu with suggestions.
 
-use std::cell::Cell;
+use std::cell::{Cell, OnceCell};
 
 use windows::core::PCWSTR;
 use windows::Win32::Foundation::{HWND, LPARAM, POINT};
@@ -67,7 +67,8 @@ pub fn define(e: &Editor) {
 }
 
 pub struct SpellView {
-    checkers: Checkers,
+    /// Opened on first use: creating them takes long enough to be felt at startup.
+    checkers: OnceCell<Checkers>,
     /// The document lines (first, last) the shown document was last checked
     /// over, or `None` if it isn't spell checked.
     checked: Cell<Option<(isize, isize)>>,
@@ -76,14 +77,18 @@ pub struct SpellView {
 impl SpellView {
     /// Opens Italian and English; either alone if the other isn't installed.
     pub fn new() -> SpellView {
-        SpellView { checkers: Checkers::open(&spell::LANGUAGES), checked: Cell::new(None) }
+        SpellView { checkers: OnceCell::new(), checked: Cell::new(None) }
+    }
+
+    fn checkers(&self) -> &Checkers {
+        self.checkers.get_or_init(|| Checkers::open(&spell::LANGUAGES))
     }
 
     /// Check the shown document's visible lines (`enabled` is
     /// `Tab::spell_checked`), or clear the squiggles if it isn't spell checked.
     pub fn run(&self, e: &Editor, enabled: bool) {
         e.call(SCI_SETINDICATORCURRENT, INDIC_SPELL, 0);
-        if !enabled || self.checkers.is_empty() {
+        if !enabled || self.checkers().is_empty() {
             self.checked.set(None);
             e.call(SCI_INDICATORCLEARRANGE, 0, e.text_len() as isize);
             return;
@@ -108,7 +113,7 @@ impl SpellView {
         let runs = mdstyle::style_runs(text);
         e.call(SCI_INDICATORCLEARRANGE, start, (end - start) as isize);
         for word in spell::words(text, &runs, start..end) {
-            if self.checkers.is_misspelled(&text[word.clone()]) {
+            if self.checkers().is_misspelled(&text[word.clone()]) {
                 e.call(SCI_INDICATORFILLRANGE, word.start, (word.end - word.start) as isize);
             }
         }
@@ -141,7 +146,7 @@ impl SpellView {
             }
             None => {}
         }
-        let suggestions = flagged.as_ref().map(|(_, _, w)| self.checkers.suggest(w, MAX_SUGGESTIONS)).unwrap_or_default();
+        let suggestions = flagged.as_ref().map(|(_, _, w)| self.checkers().suggest(w, MAX_SUGGESTIONS)).unwrap_or_default();
         let read_only = e.call(SCI_GETREADONLY, 0, 0) != 0;
         let has_selection = e.call(SCI_GETSELECTIONSTART, 0, 0) != e.call(SCI_GETSELECTIONEND, 0, 0);
 
@@ -181,7 +186,7 @@ impl SpellView {
         match choice {
             ID_ADD => {
                 if let Some((_, _, word)) = &flagged {
-                    self.checkers.add(word);
+                    self.checkers().add(word);
                     self.run(e, true);
                 }
             }

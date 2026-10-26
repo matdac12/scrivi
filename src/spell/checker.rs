@@ -2,7 +2,7 @@
 //! cache of what each said about a word.
 
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use windows::core::{HSTRING, PCWSTR, PWSTR};
 use windows::Win32::Globalization::{ISpellChecker, ISpellCheckerFactory, SpellCheckerFactory};
@@ -17,6 +17,9 @@ pub struct Checkers {
     list: Vec<(&'static str, ISpellChecker)>,
     /// Per language, per word: did that checker reject it.
     cache: RefCell<Vec<HashMap<String, bool>>>,
+    /// Words added this session, lowercase: Windows applies `Add` a moment
+    /// later, and the flag must stop at once.
+    added: RefCell<HashSet<String>>,
 }
 
 fn to_wide(s: &str) -> Vec<u16> {
@@ -42,7 +45,7 @@ impl Checkers {
             }
         }
         let cache = RefCell::new(vec![HashMap::new(); list.len()]);
-        Checkers { list, cache }
+        Checkers { list, cache, added: RefCell::default() }
     }
 
     pub fn is_empty(&self) -> bool {
@@ -72,6 +75,9 @@ impl Checkers {
     /// Whether every checker rejects `word` or its elided tail (the combine rule).
     pub fn is_misspelled(&self, word: &str) -> bool {
         let normal = word.replace('\u{2019}', "'");
+        if self.added.borrow().contains(&normal.to_lowercase()) {
+            return false;
+        }
         let all_reject = |w: &str| super::combine((0..self.list.len()).map(|i| self.rejects(i, w)));
         super::is_misspelled(&normal, &[&all_reject])
     }
@@ -101,6 +107,7 @@ impl Checkers {
                 let _ = checker.Add(PCWSTR(wide.as_ptr()));
             }
         }
+        self.added.borrow_mut().insert(word.replace('\u{2019}', "'").to_lowercase());
         for cache in self.cache.borrow_mut().iter_mut() {
             cache.clear();
         }
@@ -198,6 +205,27 @@ mod tests {
         }
         assert!(c.is_misspelled("tagliandoo"));
         assert!(!c.is_misspelled("tagliando"));
+    }
+
+    #[test]
+    fn adding_a_word_stops_the_flag_at_once() {
+        use windows::core::Interface;
+        use windows::Win32::Globalization::ISpellChecker2;
+        let Some(c) = both() else { return };
+        let word = "zqxvwkpl";
+        assert!(c.is_misspelled(word));
+        c.add(word);
+        let flagged_after = c.is_misspelled(word);
+        // Leave the user's dictionaries as they were.
+        let wide = to_wide(word);
+        for (_, checker) in &c.list {
+            if let Ok(two) = checker.cast::<ISpellChecker2>() {
+                unsafe {
+                    let _ = two.Remove(PCWSTR(wide.as_ptr()));
+                }
+            }
+        }
+        assert!(!flagged_after);
     }
 
     #[test]
