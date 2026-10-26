@@ -1,8 +1,8 @@
 //! Launch decisions: one resident, every later launch hands over (spec §3).
 //! `decide` is pure; the adapter below it owns the mutex, `FindWindow`,
 //! `WM_COPYDATA` and the relaunch through `explorer.exe` when elevated. That
-//! relaunch happens once: with UAC off the Explorer child is elevated too, and
-//! must run rather than relaunch again.
+//! relaunch happens once: with UAC off the shell is elevated too, so its child
+//! is, and it must run rather than relaunch again.
 
 use std::ffi::OsString;
 use std::io::Write;
@@ -16,10 +16,10 @@ use windows::Win32::Foundation::{
 };
 use windows::Win32::Security::{GetTokenInformation, TokenElevation, TOKEN_ELEVATION, TOKEN_QUERY};
 use windows::Win32::System::DataExchange::COPYDATASTRUCT;
-use windows::Win32::System::Diagnostics::ToolHelp::{
-    CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS,
+use windows::Win32::System::Threading::{
+    CreateMutexW, GetCurrentProcess, OpenProcess, OpenProcessToken,
+    PROCESS_QUERY_LIMITED_INFORMATION,
 };
-use windows::Win32::System::Threading::{CreateMutexW, GetCurrentProcess, OpenProcessToken};
 use windows::Win32::UI::WindowsAndMessaging::{
     AllowSetForegroundWindow, FindWindowW, GetShellWindow, GetWindowThreadProcessId,
     SendMessageTimeoutW, SMTO_ABORTIFHUNG, WM_COPYDATA,
@@ -44,9 +44,9 @@ pub struct State {
     pub resident: bool,
     /// This process runs elevated.
     pub elevated: bool,
-    /// Explorer started this process: the relaunch through Explorer has already
-    /// happened (or the user double-clicked the exe).
-    pub from_shell: bool,
+    /// The shell itself is elevated (UAC off, or the built-in Administrator),
+    /// so relaunching through it cannot drop elevation.
+    pub shell_elevated: bool,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -58,8 +58,9 @@ pub enum Decision {
     /// An unknown `--flag`: print the usage, exit 2.
     BadUsage,
     HandOff(Request),
-    /// Elevated and cold, and not started by Explorer: relaunch unelevated
-    /// through Explorer, then hand the request over to that child.
+    /// Elevated, with no resident, and a shell that can still drop elevation:
+    /// relaunch unelevated through Explorer, then hand the request over to that
+    /// child.
     Relaunch(Request),
     BecomeResident(Request),
 }
@@ -102,7 +103,7 @@ pub fn decide(args: &[String], state: State) -> Decision {
     };
     if state.resident {
         Decision::HandOff(request)
-    } else if state.elevated && !state.from_shell {
+    } else if state.elevated && !state.shell_elevated {
         Decision::Relaunch(request)
     } else {
         Decision::BecomeResident(request)
@@ -165,24 +166,7 @@ fn is_elevated() -> bool {
     if std::env::var_os("SCRIVI_TEST_ALLOW_ELEVATED").is_some_and(|v| v == "1") {
         return false;
     }
-    unsafe {
-        let mut token = HANDLE::default();
-        if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token).is_err() {
-            return false;
-        }
-        let mut elev = TOKEN_ELEVATION::default();
-        let mut len = 0u32;
-        let ok = GetTokenInformation(
-            token,
-            TokenElevation,
-            Some(&mut elev as *mut _ as *mut _),
-            std::mem::size_of::<TOKEN_ELEVATION>() as u32,
-            &mut len,
-        )
-        .is_ok();
-        let _ = CloseHandle(token);
-        ok && elev.TokenIsElevated != 0
-    }
+    token_is_elevated(unsafe { GetCurrentProcess() })
 }
 
 /// Start `explorer.exe <this exe>`: Explorer launches it unelevated.
@@ -200,53 +184,47 @@ fn relaunch_through_shell() -> bool {
         .is_ok()
 }
 
-/// Whether Explorer started this process. With UAC off, or as the built-in
-/// Administrator, the child Explorer starts is elevated too: it must run, not
-/// relaunch again and loop. A double-click comes the same way, so it runs too.
-fn started_by_shell() -> bool {
-    parent_image_name(std::process::id()).is_some_and(|name| is_shell_image(&name))
-}
-
-fn is_shell_image(name: &str) -> bool {
-    name.eq_ignore_ascii_case("explorer.exe")
-}
-
-/// The image name (no directory) of `pid`'s parent, e.g. `explorer.exe`.
-fn parent_image_name(pid: u32) -> Option<String> {
-    let (parent, _) = process_entry(pid)?;
-    process_entry(parent).map(|(_, name)| name)
-}
-
-/// `pid`'s parent process id, and its own image name.
-fn process_entry(pid: u32) -> Option<(u32, String)> {
+/// Whether the shell — the process behind `GetShellWindow` — is elevated, as it
+/// is with UAC off or as the built-in Administrator. Then `explorer.exe <exe>`
+/// cannot drop elevation, so relaunching through it would come back elevated
+/// for ever: the launch runs here instead. Shell missing or unreadable: say no
+/// and relaunch as before, which the wait in `hand_off_when_up` bounds.
+fn shell_is_elevated() -> bool {
     unsafe {
-        let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0).ok()?;
-        let mut entry = PROCESSENTRY32W {
-            dwSize: std::mem::size_of::<PROCESSENTRY32W>() as u32,
-            ..Default::default()
-        };
-        let mut found = None;
-        if Process32FirstW(snapshot, &mut entry).is_ok() {
-            loop {
-                if entry.th32ProcessID == pid {
-                    let end = entry
-                        .szExeFile
-                        .iter()
-                        .position(|&c| c == 0)
-                        .unwrap_or(entry.szExeFile.len());
-                    found = Some((
-                        entry.th32ParentProcessID,
-                        String::from_utf16_lossy(&entry.szExeFile[..end]),
-                    ));
-                    break;
-                }
-                if Process32NextW(snapshot, &mut entry).is_err() {
-                    break;
-                }
-            }
+        let shell = GetShellWindow();
+        if shell.is_invalid() {
+            return false;
         }
-        let _ = CloseHandle(snapshot);
-        found
+        let mut pid = 0u32;
+        GetWindowThreadProcessId(shell, Some(&mut pid));
+        let Ok(process) = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) else {
+            return false;
+        };
+        let elevated = token_is_elevated(process);
+        let _ = CloseHandle(process);
+        elevated
+    }
+}
+
+/// Whether `process`'s token is elevated. False when its token can't be read.
+fn token_is_elevated(process: HANDLE) -> bool {
+    unsafe {
+        let mut token = HANDLE::default();
+        if OpenProcessToken(process, TOKEN_QUERY, &mut token).is_err() {
+            return false;
+        }
+        let mut elev = TOKEN_ELEVATION::default();
+        let mut len = 0u32;
+        let ok = GetTokenInformation(
+            token,
+            TokenElevation,
+            Some(&mut elev as *mut _ as *mut _),
+            std::mem::size_of::<TOKEN_ELEVATION>() as u32,
+            &mut len,
+        )
+        .is_ok();
+        let _ = CloseHandle(token);
+        ok && elev.TokenIsElevated != 0
     }
 }
 
@@ -317,7 +295,7 @@ pub fn run(args: &[String]) -> i32 {
         resident: resident.is_some(),
         elevated,
         // Only the elevated path relaunches, and only it needs to know.
-        from_shell: elevated && started_by_shell(),
+        shell_elevated: elevated && shell_is_elevated(),
     };
     match decide(args, state) {
         Decision::Register => crate::shell::register(),
@@ -419,7 +397,7 @@ mod tests {
             running(),
             State {
                 elevated: true,
-                from_shell: true,
+                shell_elevated: true,
                 ..running()
             },
         ] {
@@ -480,12 +458,13 @@ mod tests {
     }
 
     #[test]
-    fn an_elevated_launch_started_by_explorer_runs_rather_than_relaunching() {
-        // UAC off, or the built-in Administrator: the Explorer child is
-        // elevated too, and relaunching it again would loop forever.
+    fn an_elevated_launch_with_an_elevated_shell_runs_rather_than_relaunching() {
+        // UAC off, or the built-in Administrator: Explorer is elevated too, so
+        // its child is, and relaunching through it would come back elevated for
+        // ever. Running here is the loop guard.
         let shell = State {
             elevated: true,
-            from_shell: true,
+            shell_elevated: true,
             ..State::default()
         };
         assert_eq!(
@@ -495,12 +474,17 @@ mod tests {
     }
 
     #[test]
-    fn an_elevated_cold_launch_relaunches_through_explorer() {
-        let elevated = State {
+    fn an_elevated_launch_with_an_unelevated_shell_relaunches_through_explorer() {
+        // "Run as administrator" from Explorer too: its parent is explorer.exe,
+        // but the shell is not elevated, so the relaunch can still drop
+        // elevation, and must: an elevated resident could not take the next
+        // launch (UIPI blocks WM_COPYDATA and drops from Explorer).
+        let admin = State {
             elevated: true,
+            shell_elevated: false,
             ..State::default()
         };
-        assert_eq!(d(&["a.md"], elevated), Decision::Relaunch(open(&["a.md"])));
+        assert_eq!(d(&["a.md"], admin), Decision::Relaunch(open(&["a.md"])));
     }
 
     #[test]
@@ -530,21 +514,6 @@ mod tests {
             false
         }));
         assert_eq!(tries, 2);
-    }
-
-    #[test]
-    fn the_shell_is_recognised_by_its_image_name() {
-        assert!(is_shell_image("explorer.exe"));
-        assert!(is_shell_image("EXPLORER.EXE"));
-        assert!(!is_shell_image("cmd.exe"));
-        assert!(!is_shell_image("explorer.exe.bak"));
-    }
-
-    #[test]
-    fn a_process_can_be_named_by_its_parent_id() {
-        // Not Explorer under cargo test, but it must name *something*.
-        let name = parent_image_name(std::process::id());
-        assert!(name.as_ref().is_some_and(|n| !n.is_empty()), "{name:?}");
     }
 
     #[test]
