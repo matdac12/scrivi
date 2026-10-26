@@ -438,6 +438,8 @@ impl Tab {
         }
         self.missing = true;
         self.missing_since = None;
+        // NTFS may give the file's index to another file now.
+        self.file_id = None;
         self.notice = Some(Notice::DeletedOnDisk);
         vec![Action::Changed(self.id)]
     }

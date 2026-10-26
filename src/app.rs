@@ -49,6 +49,7 @@ use crate::editor::{sci, Caret, Editor, NotifyHeader, ViewState};
 use crate::launch::{self, Request};
 use crate::mdview::{self, Applied};
 use crate::proto::{self, COPYDATA_REQUEST, ICON, RESTYLE_MS, SPELL_MS, TIMER_PREFS, TIMER_RESTYLE, TIMER_SPELL, WM_EDITOR_DPI, WM_HANDOFF};
+use crate::proto::WM_DISK_EVENT;
 use crate::proto::{WM_RENDERED_FAILED, WM_RENDERED_LINK, WM_RENDERED_SHOWN};
 use crate::rendered::webview;
 use crate::spellview::SpellView;
@@ -57,6 +58,7 @@ use crate::textfile::{self, Encoding, Eol};
 
 // SCRIVI-16: opening and saving, the menus. New code lives in these files.
 mod atomic;
+mod disk;
 mod files;
 mod find;
 mod findview;
@@ -171,6 +173,8 @@ struct App {
     /// Pending `Action::Recheck`s: timer id and path.
     rechecks: RefCell<Vec<(usize, PathBuf)>>,
     next_timer: Cell<usize>,
+    /// Watches the folders of the open files for Disk changes.
+    watcher: RefCell<crate::watch::Watcher>,
     /// `Action::CloseWindow` destroyed the Window: perform nothing more.
     closing: Cell<bool>,
 }
@@ -300,6 +304,7 @@ pub fn run(initial: Request) -> i32 {
             applied: Cell::new(None),
             rechecks: RefCell::new(Vec::new()),
             next_timer: Cell::new(FIRST_RECHECK_TIMER),
+            watcher: RefCell::new(disk::watcher(hwnd)),
             styled: RefCell::default(),
             spell: SpellView::new(),
             closing: Cell::new(false),
@@ -455,18 +460,26 @@ fn log_editor(a: &App) {
     const SCI_GETWRAPMODE: u32 = 2269;
     let Some(path) = std::env::var_os("SCRIVI_TEST_EDITOR") else { return };
     let e = &a.editor;
+    let tabs = a.tabs.borrow();
+    let shown = a.shown.get().and_then(|id| tabs.get(id));
     let text = format!(
         "name={}
 read_only={}
 undo={}
 wrap={}
 length={}
+notice={}
+unsaved={}
+loads={}
 ",
         a.shown.get().and_then(|id| a.tabs.borrow().get(id).map(Tab::name)).unwrap_or_default(),
         e.call(SCI_GETREADONLY, 0, 0),
         e.call(SCI_GETUNDOCOLLECTION, 0, 0),
         e.call(SCI_GETWRAPMODE, 0, 0),
         e.text_len(),
+        shown.and_then(|t| t.notice()).map_or("none".into(), |n| format!("{n:?}")),
+        shown.is_some_and(|t| t.unsaved()),
+        LOADS.load(std::sync::atomic::Ordering::Relaxed),
     );
     let tmp = PathBuf::from(&path).with_extension("tmp");
     if std::fs::write(&tmp, text).is_ok() {
@@ -576,8 +589,8 @@ fn perform(a: &App, action: Action) {
             let reply = ask(a, "Save changes before closing?", &names.join("\n"), "Save all", "Discard all");
             command(a, |t| t.close_window_reply(reply));
         }
-        // 11: watch the file's folder for Disk changes.
-        Action::Watch(_) | Action::Unwatch(_) => {}
+        Action::Watch(path) => disk::watch(a, &path),
+        Action::Unwatch(path) => disk::unwatch(a, &path),
         Action::Recheck { path, after } => {
             let timer = a.next_timer.get();
             a.next_timer.set(timer + 1);
@@ -716,6 +729,10 @@ fn in_document(a: &App, id: TabId, f: impl FnOnce(&Editor)) {
     with_document(a, doc, f);
 }
 
+/// Debug builds: files read into Tabs so far, for `SCRIVI_TEST_EDITOR`.
+#[cfg(debug_assertions)]
+static LOADS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
 /// `Action::Load`: read and decode the file into a new document for the Tab.
 fn load(a: &App, id: TabId, path: &Path, encoding: Option<Encoding>, keep_caret_line: bool) {
     let (bytes, stat) = match read_file(path) {
@@ -766,6 +783,8 @@ fn load(a: &App, id: TabId, path: &Path, encoding: Option<Encoding>, keep_caret_
     let (encoding, eol, lossy) = (decoded.encoding, decoded.eol, decoded.lossy);
     let file_id = files::file_id(path);
     let file = LoadedFile { encoding, eol, stat, file_id, text_len: decoded.text.len(), lossy };
+    #[cfg(debug_assertions)]
+    LOADS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     command(a, |t| t.loaded(id, file));
     // The Tab now knows its size: style it, or leave it plain over 1 MB.
     restyle(a);
@@ -1258,6 +1277,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                         }
                     }
                     Hit::TabClose(_) | Hit::NewTab | Hit::ScrollLeft | Hit::ScrollRight => press(a, hit),
+                    Hit::Notice => notice::press(a, x, y),
                     // A native menu bar opens on the way down.
                     Hit::Menu(i) => menu::open(a, i, false),
                     Hit::Find => find::click(a, x, y),
@@ -1268,11 +1288,10 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             WM_LBUTTONUP => {
                 let (x, y) = xy(lp);
                 let hit = a.ui.borrow().layout.hit_test(x, y);
+                // First: its capture release must not cancel its own click.
+                notice::release(a, x, y);
                 if release(a) == Some(hit) {
                     click(a, hit);
-                }
-                if hit == Hit::Notice {
-                    notice::click(a, x, y);
                 }
                 LRESULT(0)
             }
@@ -1292,6 +1311,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                 LRESULT(0)
             }
             WM_CAPTURECHANGED => {
+                notice::cancel(a);
                 let title = {
                     let mut ui = a.ui.borrow_mut();
                     ui.pressed = None;
@@ -1316,9 +1336,11 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                 } else {
                     find::leave(a);
                 }
+                notice::moved(a, x, y);
                 LRESULT(0)
             }
             WM_MOUSELEAVE => {
+                notice::left(a);
                 a.ui.borrow_mut().tracking = false;
                 set_hover(a, None);
                 find::leave(a);
@@ -1375,6 +1397,8 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                     if let Some(path) = path {
                         let on_disk = stat_of(&path);
                         command(a, |t| t.disk_event(&path, on_disk, Instant::now()));
+                        #[cfg(debug_assertions)]
+                        log_editor(a);
                     }
                 }
                 LRESULT(0)
@@ -1538,6 +1562,10 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             }
             WM_DROPFILES => {
                 files::dropped(a, windows::Win32::UI::Shell::HDROP(wp.0 as *mut _));
+                LRESULT(0)
+            }
+            WM_DISK_EVENT => {
+                disk::events(a);
                 LRESULT(0)
             }
             WM_RENDERED_SHOWN | WM_RENDERED_LINK | WM_RENDERED_FAILED => on_rendered(a, msg, wp),
