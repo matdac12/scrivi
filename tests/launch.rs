@@ -255,6 +255,59 @@ fn launch_lifecycle() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// The command line: an unknown `--flag` is refused with the usage and asks no
+/// Window; `--help` prints the usage; `--` makes the rest a path.
+#[test]
+fn a_bad_flag_is_refused_and_a_double_dash_opens_the_path_after_it() {
+    let me = Instance::new("args");
+    let dir = temp_dir("args");
+    let log = dir.join("requests.log");
+    assert!(me.find().is_none());
+
+    // Unknown flags: exit 2, the usage on stderr, nothing opened.
+    for args in [&["--bogus"][..], &["--notes.md"][..]] {
+        let out = me.scrivi(&log, args).output().unwrap();
+        assert_eq!(out.status.code(), Some(2), "{args:?}");
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(err.contains("usage:"), "{args:?}: {err:?}");
+    }
+    assert!(lines(&log).is_empty(), "{:?}", lines(&log));
+    assert!(me.find().is_none());
+
+    // --help prints the same usage and exits 0.
+    for flag in ["--help", "-h"] {
+        let out = me.scrivi(&log, &[flag]).output().unwrap();
+        assert_eq!(out.status.code(), Some(0), "{flag}");
+        let out_text = String::from_utf8_lossy(&out.stdout);
+        assert!(out_text.contains("usage:"), "{flag}: {out_text:?}");
+    }
+    assert!(me.find().is_none());
+
+    // A resident, then `-- <a path starting with -->`: it opens, and takes the
+    // lone empty Untitled Tab over instead of opening beside it.
+    let tabs_log = dir.join("tabs.log");
+    let mut start = me.scrivi(&log, &[]);
+    start.env("SCRIVI_TEST_TABS", &tabs_log);
+    let resident = Resident(start.spawn().unwrap());
+    wait_until("the Scrivi.Window window", || me.find().is_some());
+    assert_eq!(wait_lines(&log, 1), vec!["NewTab".to_string()]);
+    let notes = dir.join("--notes.md");
+    std::fs::write(&notes, "a file whose name looks like a flag\n").unwrap();
+    assert!(me
+        .scrivi(&log, &["--", notes.to_str().unwrap()])
+        .status()
+        .unwrap()
+        .success());
+    assert_eq!(wait_lines(&log, 2)[1], format!("Open\t{}", notes.display()));
+    let strip = "*--notes.md\n".to_string();
+    wait_until("the strip to hold only the opened file", || {
+        std::fs::read_to_string(&tabs_log).is_ok_and(|t| t == strip)
+    });
+    drop(resident);
+    wait_until("the window to go away", || me.find().is_none());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Two cold launches at once: one becomes the resident, the other hands over to it.
 #[test]
 fn cold_race_leaves_one_resident() {
