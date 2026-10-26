@@ -58,6 +58,8 @@ pub const RESTYLE_MS: u32 = 150;
 /// Spell check runs after this much quiet, after an edit or a scroll.
 pub const TIMER_SPELL: usize = 3;
 pub const SPELL_MS: u32 = 200;
+/// Prefs are written after the Window has been still for a moment (SCRIVI-23).
+pub const TIMER_PREFS: usize = 0x20;
 
 // Internal resident messages: every WM_APP + n goes here.
 

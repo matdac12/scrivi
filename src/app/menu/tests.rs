@@ -80,7 +80,7 @@ fn the_file_menu_reads_as_the_spec_lists_it() {
 }
 
 #[test]
-fn recent_files_is_an_empty_disabled_submenu_for_now() {
+fn recent_files_is_an_empty_disabled_submenu_while_the_list_is_empty() {
     let (enabled, items) = sub(&items(FILE, &state()), "Recent files");
     assert!(!enabled);
     assert!(items.is_empty());
