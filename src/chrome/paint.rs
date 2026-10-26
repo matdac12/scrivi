@@ -15,7 +15,7 @@ use windows::Win32::Graphics::Direct2D::{
 };
 use windows::Win32::Graphics::DirectWrite::{
     DWriteCreateFactory, IDWriteFactory, IDWriteTextFormat, DWRITE_FACTORY_TYPE_SHARED, DWRITE_FONT_STRETCH_NORMAL,
-    DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_HIT_TEST_METRICS, DWRITE_LINE_METRICS,
+    DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_WEIGHT, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_HIT_TEST_METRICS, DWRITE_LINE_METRICS,
     DWRITE_MEASURING_MODE_NATURAL,
     DWRITE_PARAGRAPH_ALIGNMENT_CENTER, DWRITE_TEXT_ALIGNMENT, DWRITE_TEXT_ALIGNMENT_CENTER,
     DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_TEXT_METRICS, DWRITE_TRIMMING, DWRITE_TRIMMING_GRANULARITY_CHARACTER,
@@ -27,10 +27,11 @@ use windows::Win32::UI::WindowsAndMessaging::{
     DestroyIcon, DrawIconEx, LoadImageW, DI_NORMAL, HICON, IMAGE_ICON, LR_DEFAULTCOLOR,
 };
 
+use super::notice::{self, Parts};
 use super::{Hit, Layout, Rect, Status};
 
 /// The spec §4 palette, plus the in-between greys of variant E.
-mod colour {
+pub(super) mod colour {
     pub const PAPER: u32 = 0xFCFCFB;
     pub const FRAME: u32 = 0xF1F1EE;
     pub const GRAPHITE: u32 = 0x1F2328;
@@ -50,6 +51,14 @@ mod colour {
     pub const CLOSE_PRESSED: u32 = 0xC83C30;
     pub const STATUS_TEXT: u32 = 0x5D626B;
     pub const STATUS_SEPARATOR: u32 = 0xDCDCD8;
+    /// Notices (spec §4): amber for news, rose for trouble, and the primary button's ink.
+    pub const INK: u32 = 0x2D4BA0;
+    pub const AMBER_BACK: u32 = 0xFBF1D9;
+    pub const AMBER_BORDER: u32 = 0xEBD9A6;
+    pub const AMBER_TEXT: u32 = 0x5B4510;
+    pub const ROSE_BACK: u32 = 0xFBE8E5;
+    pub const ROSE_BORDER: u32 = 0xEFC6C0;
+    pub const ROSE_TEXT: u32 = 0x7A2A20;
 }
 
 const UI_FONTS: [&str; 2] = ["Segoe UI Variable Text", "Segoe UI"];
@@ -58,14 +67,14 @@ const MENU_NAMES: [&str; 3] = ["File", "Edit", "View"];
 const GLYPH_MIN: &str = "\u{E921}";
 const GLYPH_MAX: &str = "\u{E922}";
 const GLYPH_RESTORE: &str = "\u{E923}";
-const GLYPH_CLOSE: &str = "\u{E8BB}";
+pub(super) const GLYPH_CLOSE: &str = "\u{E8BB}";
 const GLYPH_ADD: &str = "\u{E710}";
 const GLYPH_LEFT: &str = "\u{E96F}";
 const GLYPH_RIGHT: &str = "\u{E970}";
 const TAB_RADIUS: f32 = 8.0;
 const TAB_TEXT_L: f32 = 12.0;
 const TAB_TEXT_GAP: f32 = 8.0;
-const SMALL_RADIUS: f32 = 4.0;
+pub(super) const SMALL_RADIUS: f32 = 4.0;
 const DOT: f32 = 8.0;
 const CELL_PAD: f32 = 14.0;
 const HOVER_A: f32 = 0.06;
@@ -91,15 +100,20 @@ pub struct View<'a> {
     pub menu_focus: Option<usize>,
     /// Underline the menus' access keys (Alt held, or the keyboard is on the menu bar).
     pub access_keys: bool,
+    /// The active Tab's Notice, drawn in the layout's Notice band.
+    pub notice: Option<&'a notice::Spec>,
 }
 
-struct Fonts {
+pub(super) struct Fonts {
     menu: IDWriteTextFormat,
     tab: IDWriteTextFormat,
     status: IDWriteTextFormat,
     caption: IDWriteTextFormat,
-    tab_glyph: IDWriteTextFormat,
+    pub(super) tab_glyph: IDWriteTextFormat,
     plus: IDWriteTextFormat,
+    pub(super) notice: IDWriteTextFormat,
+    pub(super) notice_strong: IDWriteTextFormat,
+    pub(super) notice_button: IDWriteTextFormat,
 }
 
 pub struct Painter {
@@ -137,11 +151,21 @@ fn font_family(dw: &IDWriteFactory, names: &[&str]) -> HSTRING {
 
 /// A single-line, vertically centred, ellipsis-trimmed format `px` pixels tall.
 fn text_format(dw: &IDWriteFactory, family: &HSTRING, px: f32, align: DWRITE_TEXT_ALIGNMENT) -> Result<IDWriteTextFormat> {
+    text_format_weight(dw, family, px, align, DWRITE_FONT_WEIGHT_NORMAL)
+}
+
+fn text_format_weight(
+    dw: &IDWriteFactory,
+    family: &HSTRING,
+    px: f32,
+    align: DWRITE_TEXT_ALIGNMENT,
+    weight: DWRITE_FONT_WEIGHT,
+) -> Result<IDWriteTextFormat> {
     unsafe {
         let f = dw.CreateTextFormat(
             family,
             None,
-            DWRITE_FONT_WEIGHT_NORMAL,
+            weight,
             DWRITE_FONT_STYLE_NORMAL,
             DWRITE_FONT_STRETCH_NORMAL,
             px,
@@ -166,6 +190,9 @@ fn fonts(dw: &IDWriteFactory, ui: &HSTRING, icons: &HSTRING, scale: f32) -> Resu
         caption: text_format(dw, icons, 10.0 * scale, centre)?,
         tab_glyph: text_format(dw, icons, 8.0 * scale, centre)?,
         plus: text_format(dw, icons, 11.0 * scale, centre)?,
+        notice: text_format(dw, ui, 12.5 * scale, lead)?,
+        notice_strong: text_format_weight(dw, ui, 12.5 * scale, lead, DWRITE_FONT_WEIGHT_SEMI_BOLD)?,
+        notice_button: text_format_weight(dw, ui, 12.0 * scale, centre, DWRITE_FONT_WEIGHT_SEMI_BOLD)?,
     })
 }
 
@@ -183,7 +210,7 @@ fn rf(r: Rect, oy: i32) -> D2D_RECT_F {
     D2D_RECT_F { left: r.left as f32, top: (r.top - oy) as f32, right: r.right as f32, bottom: (r.bottom - oy) as f32 }
 }
 
-fn rounded(rect: D2D_RECT_F, radius: f32) -> D2D1_ROUNDED_RECT {
+pub(super) fn rounded(rect: D2D_RECT_F, radius: f32) -> D2D1_ROUNDED_RECT {
     D2D1_ROUNDED_RECT { rect, radiusX: radius, radiusY: radius }
 }
 
@@ -192,30 +219,30 @@ fn intersects(a: Rect, b: &RECT) -> bool {
 }
 
 /// Draws with one target and one pass offset.
-struct Pass<'a> {
-    rt: &'a ID2D1DCRenderTarget,
+pub(super) struct Pass<'a> {
+    pub(super) rt: &'a ID2D1DCRenderTarget,
     dw: &'a IDWriteFactory,
-    fonts: &'a Fonts,
-    oy: i32,
-    scale: f32,
+    pub(super) fonts: &'a Fonts,
+    pub(super) oy: i32,
+    pub(super) scale: f32,
 }
 
 impl Pass<'_> {
-    fn brush(&self, c: u32, a: f32) -> Result<ID2D1SolidColorBrush> {
+    pub(super) fn brush(&self, c: u32, a: f32) -> Result<ID2D1SolidColorBrush> {
         unsafe { self.rt.CreateSolidColorBrush(&rgb(c, a), None) }
     }
 
-    fn fill(&self, r: Rect, c: u32, a: f32) -> Result<()> {
+    pub(super) fn fill(&self, r: Rect, c: u32, a: f32) -> Result<()> {
         unsafe { self.rt.FillRectangle(&rf(r, self.oy), &self.brush(c, a)?) };
         Ok(())
     }
 
-    fn fill_rounded(&self, r: Rect, radius: f32, c: u32, a: f32) -> Result<()> {
+    pub(super) fn fill_rounded(&self, r: Rect, radius: f32, c: u32, a: f32) -> Result<()> {
         unsafe { self.rt.FillRoundedRectangle(&rounded(rf(r, self.oy), radius * self.scale), &self.brush(c, a)?) };
         Ok(())
     }
 
-    fn text(&self, s: &str, f: &IDWriteTextFormat, r: Rect, c: u32) -> Result<()> {
+    pub(super) fn text(&self, s: &str, f: &IDWriteTextFormat, r: Rect, c: u32) -> Result<()> {
         unsafe {
             self.rt.DrawText(
                 &wide(s),
@@ -266,7 +293,7 @@ impl Pass<'_> {
         }
     }
 
-    fn px(&self, dip: f32) -> i32 {
+    pub(super) fn px(&self, dip: f32) -> i32 {
         (dip * self.scale).round() as i32
     }
 }
@@ -295,6 +322,13 @@ impl Painter {
     /// Text widths of "File", "Edit", "View" in DIPs, for `Frame::menu_text`.
     pub fn menu_text(&self) -> [f32; 3] {
         MENU_NAMES.map(|m| self.measure(m, &self.fonts.menu) / self.scale)
+    }
+
+    /// Where the pieces of `spec` sit in `band`.
+    pub fn notice_parts(&self, band: Rect, spec: &notice::Spec) -> Parts {
+        let widths: Vec<f32> =
+            spec.buttons.iter().map(|b| self.measure(&b.label, &self.fonts.notice_button) / self.scale).collect();
+        Parts::new(band, self.scale, &widths, spec.closable)
     }
 
     fn measure(&self, s: &str, f: &IDWriteTextFormat) -> f32 {
@@ -338,7 +372,7 @@ impl Painter {
             result = unsafe {
                 rt.BindDC(hdc, &bounds).and_then(|()| {
                     rt.BeginDraw();
-                    let drawn = if top_pass { draw_top(&pass, v) } else { draw_status(&pass, v, &status_widths) };
+                    let drawn = if top_pass { draw_top(&pass, v, self) } else { draw_status(&pass, v, &status_widths) };
                     let ended = rt.EndDraw(None, None);
                     drawn.and(ended)
                 })
@@ -388,7 +422,7 @@ impl Drop for Painter {
 }
 
 /// The title row, then the Notice and find-bar bands (empty until 10-12).
-fn draw_top(p: &Pass, v: &View) -> Result<()> {
+fn draw_top(p: &Pass, v: &View, painter: &Painter) -> Result<()> {
     let l = v.layout;
     let f = p.fonts;
     let title = l.title;
@@ -453,8 +487,14 @@ fn draw_top(p: &Pass, v: &View) -> Result<()> {
         p.text(glyph, &f.caption, *r, ink)?;
     }
 
-    // Bands 10, 11 and 12 fill; until then a plain surface if ever opened.
+    // Band 12 fills the find bar; until then a plain surface if ever opened.
     p.fill(l.notice, colour::PAPER, 1.0)?;
+    if let Some(spec) = v.notice {
+        let parts = painter.notice_parts(l.notice, spec);
+        notice::draw(p, v, spec, &parts, &|s, strong| {
+            painter.measure(s, if strong { &f.notice_strong } else { &f.notice })
+        })?;
+    }
     p.fill(l.find, colour::FRAME, 1.0)?;
     Ok(())
 }

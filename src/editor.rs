@@ -355,13 +355,14 @@ impl Editor {
     }
 
     /// Replace the shown document's text with `text`, without undo history,
-    /// unmodified (spec §7: allocate once, undo collection off).
-    pub fn fill(&self, text: &str) {
+    /// unmodified (spec §7: allocate once, undo collection off). A Large file
+    /// keeps undo collection off for good: it has no undo.
+    pub fn fill(&self, text: &str, large: bool) {
         self.call(SCI_SETUNDOCOLLECTION, 0, 0);
         self.call(SCI_CLEARALL, 0, 0);
         self.call(SCI_ALLOCATE, text.len() + 1, 0);
         self.call(SCI_ADDTEXT, text.len(), text.as_ptr() as isize);
-        self.call(SCI_SETUNDOCOLLECTION, 1, 0);
+        self.call(SCI_SETUNDOCOLLECTION, !large as usize, 0);
         self.call(SCI_EMPTYUNDOBUFFER, 0, 0);
         self.call(SCI_SETSAVEPOINT, 0, 0);
     }

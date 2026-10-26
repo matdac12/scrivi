@@ -59,6 +59,7 @@ use crate::textfile::{self, Encoding, Eol};
 mod atomic;
 mod files;
 mod menu;
+mod notice;
 mod recent;
 mod rendered_view;
 
@@ -413,7 +414,38 @@ pub fn on_handoff(request: Request) {
         Request::Open(paths) => files::open_paths(a, &paths),
     }
     #[cfg(debug_assertions)]
-    log_tabs(a);
+    {
+        log_tabs(a);
+        log_editor(a);
+    }
+}
+
+/// Test hook, debug builds only: rewrite the file named by `SCRIVI_TEST_EDITOR`
+/// with how the shown document is set up, as `key=value` lines.
+#[cfg(debug_assertions)]
+fn log_editor(a: &App) {
+    const SCI_GETREADONLY: u32 = 2140;
+    const SCI_GETUNDOCOLLECTION: u32 = 2019;
+    const SCI_GETWRAPMODE: u32 = 2269;
+    let Some(path) = std::env::var_os("SCRIVI_TEST_EDITOR") else { return };
+    let e = &a.editor;
+    let text = format!(
+        "name={}
+read_only={}
+undo={}
+wrap={}
+length={}
+",
+        a.shown.get().and_then(|id| a.tabs.borrow().get(id).map(Tab::name)).unwrap_or_default(),
+        e.call(SCI_GETREADONLY, 0, 0),
+        e.call(SCI_GETUNDOCOLLECTION, 0, 0),
+        e.call(SCI_GETWRAPMODE, 0, 0),
+        e.text_len(),
+    );
+    let tmp = PathBuf::from(&path).with_extension("tmp");
+    if std::fs::write(&tmp, text).is_ok() {
+        let _ = std::fs::rename(&tmp, &path);
+    }
 }
 
 /// Test hook, debug builds only: rewrite the file named by `SCRIVI_TEST_TABS`
@@ -674,10 +706,13 @@ fn load(a: &App, id: TabId, path: &Path, encoding: Option<Encoding>, keep_caret_
         }
     };
     let decoded = match encoding {
-        Some(encoding) => textfile::decode_as(&bytes, encoding),
-        None => textfile::decode(&bytes, unsafe { GetACP() } as u16),
+        Some(encoding) => {
+            let decoded = textfile::decode_as(&bytes, encoding);
+            drop(bytes);
+            decoded
+        }
+        None => textfile::decode_owned(bytes, unsafe { GetACP() } as u16),
     };
-    drop(bytes);
     let mut view = ViewState::default();
     if keep_caret_line {
         if a.shown.get() == Some(id) {
@@ -685,10 +720,11 @@ fn load(a: &App, id: TabId, path: &Path, encoding: Option<Encoding>, keep_caret_
         }
         view = a.views.borrow().get(&id).copied().unwrap_or_default();
     }
-    let doc = a.editor.create_document(textfile::is_large(stat.size));
+    let large = textfile::is_large(stat.size);
+    let doc = a.editor.create_document(large);
     with_document(a, doc, |e| {
         e.set_eol_mode(decoded.eol);
-        e.fill(&decoded.text);
+        e.fill(&decoded.text, large);
         if keep_caret_line {
             let start = e.line_start(view.caret_line);
             view = ViewState { anchor: start, caret: start, x_offset: 0, ..view };
@@ -848,11 +884,12 @@ fn relayout(a: &App) {
         (GetDpiForWindow(hwnd), IsZoomed(hwnd).as_bool())
     };
     let border = resize_border(dpi).1;
-    let (count, active, active_at) = {
+    let (count, active, active_at, notice_h) = {
         let tabs = a.tabs.borrow();
         let active = tabs.active();
         let at = tabs.iter().position(|t| Some(t.id()) == active);
-        (tabs.iter().count(), active, at)
+        let notice_h = if notice::spec(&tabs).is_some() { crate::chrome::notice::HEIGHT } else { 0.0 };
+        (tabs.iter().count(), active, at, notice_h)
     };
     let editor = {
         let mut ui = a.ui.borrow_mut();
@@ -860,6 +897,7 @@ fn relayout(a: &App) {
             width: rc.right,
             height: rc.bottom,
             scale: dpi as f32 / 96.0,
+            notice_h,
             tabs: count,
             tab_scroll: ui.tab_scroll,
             menu_text: ui.menu_text,
@@ -1044,7 +1082,9 @@ fn paint(a: &App) {
             let strip: Vec<TabView> =
                 names.iter().map(|(name, active, unsaved)| TabView { name, active: *active, unsaved: *unsaved }).collect();
             let (menu_focus, access_keys) = menu::painted();
+            let notice = notice::spec(&tabs);
             let view = View {
+                notice: notice.as_ref(),
                 layout: &ui.layout,
                 menu_focus,
                 access_keys,
@@ -1200,6 +1240,9 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                 let hit = a.ui.borrow().layout.hit_test(x, y);
                 if release(a) == Some(hit) {
                     click(a, hit);
+                }
+                if hit == Hit::Notice {
+                    notice::click(a, x, y);
                 }
                 LRESULT(0)
             }
