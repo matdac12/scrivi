@@ -82,12 +82,14 @@ struct Live {
 /// Shared with the navigation handlers.
 #[derive(Default)]
 struct Nav {
-    /// Set just before scrivi's own `NavigateToString`: exactly the next
-    /// navigation (a `data:` URL) is allowed.
-    render_pending: Cell<bool>,
-    /// The id of that navigation, once it starts.
+    /// Counted up just before each of scrivi's own `NavigateToString`s: that
+    /// many `data:` navigations are allowed. A count, not a flag, so a render
+    /// asked for before the last one started isn't cancelled as a stranger.
+    /// (The page itself can't link to `data:`: ammonia drops the scheme.)
+    render_pending: Cell<u32>,
+    /// The id of the latest of those navigations to start.
     ours: Cell<Option<u64>>,
-    /// It has completed: the page is on screen.
+    /// That navigation completed: the page is on screen.
     done: Cell<bool>,
 }
 
@@ -261,13 +263,16 @@ fn navigate(live: &Live, page: &Page, key: u64, hwnd: HWND) {
                 );
             }
         }
-        live.nav.render_pending.set(true);
-        live.nav.ours.set(None);
-        live.nav.done.set(false);
+        // Out of sight until the new page has loaded: the editor shows this
+        // Tab's source meanwhile, never another Tab's page.
+        set_visible(live, false);
+        let nav = &live.nav;
+        nav.render_pending.set(nav.render_pending.get() + 1);
+        nav.done.set(false);
         let html = HSTRING::from(page.html.as_str());
         let navigated = live.webview.NavigateToString(&html).is_ok();
         if !navigated {
-            live.nav.render_pending.set(false);
+            nav.render_pending.set(nav.render_pending.get().saturating_sub(1));
         }
         let root = page.root.clone();
         with(|h| {
@@ -412,12 +417,13 @@ unsafe fn configure(
                 let mut uri = PWSTR::null();
                 args.Uri(&mut uri)?;
                 let uri = take_pwstr(uri);
-                if nav.render_pending.get() && uri.starts_with("data:") {
-                    // scrivi's own render.
-                    nav.render_pending.set(false);
+                if nav.render_pending.get() > 0 && uri.starts_with("data:") {
+                    // scrivi's own render; a later one supersedes an earlier.
+                    nav.render_pending.set(nav.render_pending.get() - 1);
                     let mut id = 0u64;
                     args.NavigationId(&mut id)?;
                     nav.ours.set(Some(id));
+                    nav.done.set(false);
                     return Ok(());
                 }
                 args.SetCancel(true)?;
@@ -432,7 +438,9 @@ unsafe fn configure(
                 let Some(args) = args else { return Ok(()) };
                 let mut id = 0u64;
                 args.NavigationId(&mut id)?;
-                if nav.ours.get() == Some(id) {
+                let mut success = windows::core::BOOL::default();
+                args.IsSuccess(&mut success)?;
+                if nav.ours.get() == Some(id) && success.as_bool() {
                     nav.done.set(true);
                     // Shown from the Window's message loop, not from inside WebView2.
                     post(hwnd, WM_RENDERED_SHOWN, 0, 0);

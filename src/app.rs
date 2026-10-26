@@ -50,10 +50,8 @@ use crate::launch::{self, Request};
 use crate::mdview::{self, Applied};
 use crate::proto::{self, COPYDATA_REQUEST, ICON, RESTYLE_MS, SPELL_MS, TIMER_RESTYLE, TIMER_SPELL, WM_EDITOR_DPI, WM_HANDOFF};
 use crate::proto::{WM_RENDERED_FAILED, WM_RENDERED_LINK, WM_RENDERED_SHOWN};
-use crate::rendered::{self, webview};
+use crate::rendered::webview;
 use crate::spellview::SpellView;
-use windows::Win32::UI::Input::KeyboardAndMouse::GetFocus;
-use windows::Win32::UI::Shell::ShellExecuteW;
 use crate::tabs::{Action, CloseReply, EditorDoc, FileStat, LoadedFile, StatusNote, Tab, TabId, Tabs};
 use crate::textfile::{self, Encoding, Eol};
 
@@ -61,6 +59,9 @@ use crate::textfile::{self, Encoding, Eol};
 mod atomic;
 mod files;
 mod menu;
+mod rendered_view;
+
+use rendered_view::{on_rendered, rect_of, sync_rendered};
 
 /// First size of the Window, in DIPs, before prefs (09) remembers one.
 const START_W: f32 = 1100.0;
@@ -1294,6 +1295,9 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                     relayout(a);
                 }
                 webview::set_minimized(wp.0 as u32 == SIZE_MINIMIZED);
+                if wp.0 as u32 != SIZE_MINIMIZED {
+                    rendered_view::refocus(a);
+                }
                 LRESULT(0)
             }
             WM_MOVE => {
@@ -1442,152 +1446,6 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             }
             _ => DefWindowProcW(hwnd, msg, wp, lp),
         }
-    }
-}
-
-// 13: the Rendered view. WebView2 lives only while some Tab is in it (spec §6);
-// `rendered::webview` owns it, this is the glue.
-
-thread_local! {
-    /// The editor is read-only behind the Rendered view (and hidden once the page is up).
-    static BEHIND_PAGE: Cell<bool> = const { Cell::new(false) };
-    /// The Window's accelerators, for keys pressed while the page has the focus.
-    static KEYS: OnceCell<Vec<ACCEL>> = const { OnceCell::new() };
-}
-
-fn rect_of(r: Rect) -> RECT {
-    RECT { left: r.left, top: r.top, right: r.right, bottom: r.bottom }
-}
-
-/// Show the active Tab's page if it is in the Rendered view; otherwise hide
-/// WebView2 while another Tab still is, or close it when none is.
-fn sync_rendered(a: &App) {
-    let (rendered, any, path) = {
-        let tabs = a.tabs.borrow();
-        let tab = tabs.active().and_then(|id| tabs.get(id));
-        let rendered = tab.filter(|t| t.view() == crate::tabs::View::Rendered).map(Tab::id);
-        (rendered, tabs.any_rendered(), tab.and_then(|t| t.path().map(Path::to_path_buf)))
-    };
-    let Some(id) = rendered.filter(|id| a.shown.get() == Some(*id)) else {
-        if BEHIND_PAGE.replace(false) {
-            let page_had_focus = webview::painted();
-            unsafe {
-                let _ = ShowWindow(a.editor.hwnd(), SW_SHOW);
-            }
-            if let Some(id) = a.shown.get() {
-                // The read-only state goes back to the Tab's own.
-                a.applied.set(None);
-                apply_settings(a, id);
-            }
-            if page_had_focus || unsafe { GetFocus() }.is_invalid() {
-                unsafe {
-                    let _ = SetFocus(Some(a.editor.hwnd()));
-                }
-            }
-        }
-        if any {
-            webview::hide();
-        } else {
-            webview::close();
-        }
-        return;
-    };
-    let folder = webview::folder_for(path.as_deref());
-    let text = editor_text(&a.editor);
-    match rendered::to_html(&text, &folder) {
-        Ok(page) => {
-            // Until the page is up the source stays in sight, but can't change.
-            // Every time: showing another rendered Tab reapplied its own settings.
-            BEHIND_PAGE.set(true);
-            a.editor.set_read_only(true);
-            let keys = KEYS.with(|k| k.get_or_init(accelerator_entries).clone());
-            let bounds = rect_of(a.ui.borrow().layout.editor);
-            webview::show(a.hwnd, &keys, cmd::SHOW_SOURCE, page, bounds);
-            // A page already loaded (back to a Tab shown before) is up at once.
-            cover_editor(a);
-        }
-        Err(rendered::TooLarge) => {
-            command(a, |t| t.show_source(id));
-            perform(a, Action::Flash(StatusNote::TooLargeToRender));
-        }
-    }
-}
-
-/// The shown document's text. Scintilla holds UTF-8 (`SC_CP_UTF8`).
-fn editor_text(e: &Editor) -> String {
-    let len = e.text_len();
-    let ptr = e.call(sci::SCI_GETCHARACTERPOINTER, 0, 0) as *const u8;
-    if len == 0 || ptr.is_null() {
-        return String::new();
-    }
-    // The pointer stays valid until the document next changes, after this copy.
-    String::from_utf8_lossy(unsafe { std::slice::from_raw_parts(ptr, len) }).into_owned()
-}
-
-/// The entries of `accelerators()`, the same table the message loop uses.
-fn accelerator_entries() -> Vec<ACCEL> {
-    unsafe {
-        let table = accelerators();
-        let n = CopyAcceleratorTableW(table, None);
-        let mut entries = vec![ACCEL::default(); n.max(0) as usize];
-        CopyAcceleratorTableW(table, Some(&mut entries));
-        let _ = DestroyAcceleratorTable(table);
-        entries
-    }
-}
-
-/// Once the page is on screen it covers the editor band: hide the editor
-/// behind it and give the page the focus.
-fn cover_editor(a: &App) {
-    let editor = a.editor.hwnd();
-    unsafe {
-        if !webview::painted() || !BEHIND_PAGE.get() || !IsWindowVisible(editor).as_bool() {
-            return;
-        }
-        let had_focus = GetFocus() == editor;
-        let _ = ShowWindow(editor, SW_HIDE);
-        if had_focus || GetForegroundWindow() == a.hwnd {
-            webview::focus();
-        }
-    }
-}
-
-/// The messages `rendered::webview` posts from WebView2's handlers.
-unsafe fn on_rendered(a: &App, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
-    unsafe {
-        match msg {
-            WM_RENDERED_SHOWN => {
-                webview::reveal();
-                cover_editor(a);
-            }
-            WM_RENDERED_LINK => {
-                let uri = Box::from_raw(lp.0 as *mut String);
-                // Checked again here: only web and mail links leave scrivi.
-                if rendered::opens_outside(&uri) {
-                    let uri = wide(&uri);
-                    ShellExecuteW(Some(a.hwnd), w!("open"), PCWSTR(uri.as_ptr()), None, None, SW_SHOWNORMAL);
-                }
-            }
-            _ => {
-                // Back to the Source view: every rendered Tab if WebView2
-                // couldn't start, the active one if its page was refused.
-                let failed_start = wp.0 == webview::FAILED_TO_START;
-                command(a, |t| {
-                    let ids: Vec<TabId> = if failed_start {
-                        t.iter().filter(|x| x.view() == crate::tabs::View::Rendered).map(Tab::id).collect()
-                    } else {
-                        t.active().into_iter().collect()
-                    };
-                    ids.into_iter().flat_map(|id| t.show_source(id)).collect()
-                });
-                if failed_start {
-                    message(a, "The Rendered view needs the Microsoft Edge WebView2 Runtime, and it didn't start.");
-                } else {
-                    perform(a, Action::Flash(StatusNote::TooLargeToRender));
-                }
-            }
-        }
-        LRESULT(0)
     }
 }
 

@@ -656,13 +656,14 @@ fn state_flags(enabled: bool, checked: bool) -> MENU_ITEM_STATE {
 fn state_of(a: &App) -> State {
     let tab = {
         let tabs = a.tabs.borrow();
-        tabs.active().and_then(|id| tabs.get(id)).map(|t| (t.encoding(), t.eol(), t.read_only(), t.is_untitled()))
+        tabs.active().and_then(|id| tabs.get(id)).map(|t| {
+            // The Rendered view is read-only too (13).
+            let read_only = t.read_only() || t.view() == crate::tabs::View::Rendered;
+            (t.encoding(), t.eol(), read_only, t.is_untitled(), t.kind() == crate::tabs::Kind::Markdown)
+        })
     };
-    let (encoding, eol, read_only, untitled) = tab.unwrap_or((NEW_FILE.0, NEW_FILE.1, false, true));
-    let markdown = {
-        let tabs = a.tabs.borrow();
-        tabs.active().and_then(|id| tabs.get(id)).is_some_and(|t| t.kind() == crate::tabs::Kind::Markdown)
-    };
+    let (encoding, eol, read_only, untitled, markdown) =
+        tab.unwrap_or((NEW_FILE.0, NEW_FILE.1, false, true, true));
     let ask = |msg| editor_call(a, msg) != 0;
     State {
         encoding,
@@ -718,10 +719,10 @@ pub fn run(a: &App, id: u16) -> bool {
             let eol = Eol::MENU[(id - cmd::EOL) as usize];
             on_active(&|t, tab| t.set_eol(tab, eol));
         }
-        // 12 and 13 wire these; their items are greyed until then.
+        // 12 wires these; their items are greyed until then. (13's
+        // RENDERED_VIEW is routed by `app` before the menus.)
         cmd::FIND | cmd::REPLACE | cmd::GO_TO_LINE => {}
-        // 13: app routes RENDERED_VIEW before the menus.
-        cmd::RENDERED_VIEW | cmd::WORD_WRAP | cmd::ZOOM_IN | cmd::ZOOM_OUT | cmd::ZOOM_RESET => {}
+        cmd::WORD_WRAP | cmd::ZOOM_IN | cmd::ZOOM_OUT | cmd::ZOOM_RESET => {}
         _ => return false,
     }
     true
