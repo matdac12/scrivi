@@ -310,6 +310,7 @@ impl Editor {
 
         // After STYLECLEARALL above, which would wipe them.
         crate::mdview::define(self);
+        crate::spellview::define(self);
     }
 
     /// Everything Scintilla takes in raw pixels. Call once the control has seen

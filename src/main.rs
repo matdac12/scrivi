@@ -12,6 +12,7 @@ mod proto;
 mod rendered;
 mod shell;
 mod spell;
+mod spellview;
 mod tabs;
 mod textfile;
 mod watch;
