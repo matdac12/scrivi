@@ -567,11 +567,6 @@ impl Editor {
         self.call(if out { SCI_ZOOMOUT } else { SCI_ZOOMIN }, 0, 0);
     }
 
-    /// Zoom in points added to the font size; 0 is 100 %.
-    pub fn zoom_points(&self) -> i32 {
-        self.call(SCI_GETZOOM, 0, 0) as i32
-    }
-
     pub fn set_zoom_points(&self, points: i32) {
         self.call(SCI_SETZOOM, points as usize, 0);
     }
