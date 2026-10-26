@@ -5,6 +5,33 @@ All notable changes to scrivi are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `scrivi.exe --help` (and `-h`) prints the flags; `--` ends them, so a file
+  named like a flag still opens. An unknown `--flag` prints the usage and
+  exits 2.
+
+### Changed
+
+- A new app icon: a quill on an ivory tile, with a simpler drawing at 16 and
+  20 px. `scripts/make-icon.ps1` rebuilds it from `assets/scrivi.svg`.
+- Opening a file when the only Tab is an empty, untouched Untitled tab
+  replaces that Tab, as Windows 11 Notepad does.
+- Plain-ASCII files load faster: the 200 MB log takes about 0.35 s.
+- CI also runs `cargo fmt --check` and the install script's tests.
+
+### Fixed
+
+- An elevated launch with UAC off no longer relaunches through Explorer in a
+  loop; "Run as administrator" still ends up as a normal, unelevated Window.
+- A launch retries the hand-over once if the running Window is busy.
+- The install script refuses to overwrite a running scrivi even when Windows
+  hides that process's path, instead of failing halfway.
+- `--unregister` removes every value it can and reports all errors together;
+  `--register` reports when it can't open Default apps.
+
 ## [0.1.0] - 2026-10-26
 
 First release (milestone v1). Unsigned; SmartScreen warns once.

@@ -60,7 +60,9 @@ The script builds with `cargo build --release` using the Rust version pinned in
 
 - `scrivi.exe` adds an Untitled tab. `scrivi.exe <path>` opens the file in a
   Tab, or switches to its Tab if it's already open. There is only ever one
-  Window; a second launch hands over to the first.
+  Window; a second launch hands over to the first. Opening a file when the
+  only Tab is an empty, untouched Untitled tab replaces that Tab, as Windows
+  11 Notepad does.
 - Files save explicitly. If a file changes on disk, a Notice offers Keep mine
   or Reload.
 - Files over 50 MB open read-only. Markdown files over 1 MB get no styling and
@@ -97,17 +99,17 @@ CapsLock & n::Run("<path>\scrivi.exe")
   default. `scrivi.exe --register` adds scrivi to Default apps and opens that page; you pick it per file
   type (`.txt`, `.md`, `.log`, ...). scrivi never writes `UserChoice`.
 - **Newer Windows 11 builds** may use `UserChoiceLatest`, which only Settings can write. Picking scrivi in
-  Settings should still work. To be confirmed in the v1 hand check.
-- **Files with no extension:** scrivi registers for them, but whether Settings offers that type is to be
-  confirmed in the v1 hand check.
+  Settings should still work. Not yet confirmed on a machine that has it.
+- **Files with no extension:** scrivi registers for them, but whether Settings offers that type is not
+  yet confirmed.
 - **Explorer's Edit verb:** scrivi registers an Edit verb, but whether Explorer uses it for `.txt` and
-  `.ini` is to be confirmed in the v1 hand check. From research, types that hard-code Notepad (`.bat`,
-  `.reg`) keep Notepad.
-- **Right-click > New > Text Document:** to be confirmed in the v1 hand check.
+  `.ini` is not yet confirmed. From research, types that hard-code Notepad (`.bat`, `.reg`) keep
+  Notepad.
+- **Right-click > New > Text Document:** not yet confirmed.
 - **Opening a 200 MB log takes about 0.35 s** in-process with a warm cache (SCRIVI-30), against the
   spec's 337 ms target; most of what is left is Scintilla's own insert, and a busy machine adds to
   both. Files over 50 MB open read-only, without undo, wrap or styling.
-- **The exe is 2.57 MB**, above the spec's 1–2 MB goal.
+- **The exe is about 2.6 MB**, above the spec's 1–2 MB goal.
 - **A live log over 50 MB reloads after each change.** A Large file that something keeps appending to is
   reloaded after each debounced Disk change; accepted for v1.
 
