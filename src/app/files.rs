@@ -73,7 +73,7 @@ fn path_of(item: &IShellItem) -> Option<PathBuf> {
 /// The identity of the file at `path`, for `tabs` to tell two paths to one
 /// file apart from two files. `None` if it can't be read (a new file).
 pub fn file_id(path: &Path) -> Option<FileId> {
-    atomic::file_info(path).map(|i| i.id)
+    atomic::file_info(path).and_then(|i| i.id)
 }
 
 /// Open each path in a Tab, or switch to the Tab already on that file.

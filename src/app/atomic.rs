@@ -212,7 +212,7 @@ fn write_in_place(path: &Path, bytes: &[u8]) -> Result<(), InPlaceError> {
 
 /// What a path leads to, as `GetFileInformationByHandle` tells.
 pub struct FileInfo {
-    pub id: FileId,
+    pub id: Option<FileId>,
     pub links: u32,
 }
 
@@ -234,11 +234,10 @@ pub fn file_info(path: &Path) -> Option<FileInfo> {
         let got = GetFileInformationByHandle(handle, &mut info);
         let _ = CloseHandle(handle);
         got.ok()?;
+        let index = (u64::from(info.nFileIndexHigh) << 32) | u64::from(info.nFileIndexLow);
         Some(FileInfo {
-            id: FileId {
-                volume: info.dwVolumeSerialNumber,
-                index: (u64::from(info.nFileIndexHigh) << 32) | u64::from(info.nFileIndexLow),
-            },
+            // Index 0: the file system has no file index to tell files by.
+            id: (index != 0).then_some(FileId { volume: info.dwVolumeSerialNumber, index }),
             links: info.nNumberOfLinks,
         })
     }
@@ -247,7 +246,7 @@ pub fn file_info(path: &Path) -> Option<FileInfo> {
 /// Paths this long or longer get the `\\?\` prefix, which lifts the
 /// `MAX_PATH` limit without needing `longPathAware` and the system's
 /// long-path setting (std does the same for its own calls).
-const LONG_PATH: usize = 240;
+const LONG_PATH: usize = 200;
 
 /// `path` as the wide string for a Win32 call.
 fn extended(path: &Path) -> HSTRING {
