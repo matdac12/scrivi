@@ -14,6 +14,8 @@ fn state() -> State {
         selection: true,
         can_paste: true,
         markdown: true,
+        wrap: true,
+        wrap_allowed: true,
     }
 }
 
@@ -175,11 +177,12 @@ fn edit_commands_follow_the_editor() {
 }
 
 #[test]
-fn find_and_the_view_menu_wait_for_their_tickets_greyed() {
-    let edit = items(EDIT, &state());
+fn find_replace_go_to_line_and_the_view_menu_are_on() {
+    // Even a read-only Tab can be searched.
+    let edit = items(EDIT, &State { read_only: true, ..state() });
     assert_eq!(labels(&edit)[7..], ["-", "Find…\tCtrl+F", "Replace…\tCtrl+H", "Go to line…\tCtrl+G"]);
     for id in [cmd::FIND, cmd::REPLACE, cmd::GO_TO_LINE] {
-        assert!(!enabled(&edit, id));
+        assert!(enabled(&edit, id));
     }
     let view = items(VIEW, &state());
     assert_eq!(
@@ -193,7 +196,22 @@ fn find_and_the_view_menu_wait_for_their_tickets_greyed() {
             "Reset zoom\tCtrl+0"
         ]
     );
-    assert!(!enabled_all(&view));
+    for id in [cmd::WORD_WRAP, cmd::ZOOM_IN, cmd::ZOOM_OUT, cmd::ZOOM_RESET] {
+        assert!(enabled(&view, id), "{id}");
+    }
+}
+
+fn is_checked(items: &[Item], id: u16) -> bool {
+    items.iter().any(|i| matches!(i, Item::Command { id: i, checked: true, .. } if *i == id))
+}
+
+#[test]
+fn word_wrap_is_checked_when_on_and_greyed_for_a_large_file() {
+    assert!(is_checked(&items(VIEW, &state()), cmd::WORD_WRAP));
+    assert!(!is_checked(&items(VIEW, &State { wrap: false, ..state() }), cmd::WORD_WRAP));
+    let large = items(VIEW, &State { wrap_allowed: false, ..state() });
+    assert!(!enabled(&large, cmd::WORD_WRAP));
+    assert!(!is_checked(&large, cmd::WORD_WRAP));
 }
 
 /// Every command id, submenus included.
