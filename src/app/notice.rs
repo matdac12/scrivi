@@ -16,8 +16,13 @@ thread_local! {
 
 /// The Notice the active Tab shows, if any, with the mouse over it.
 pub fn spec(tabs: &Tabs) -> Option<Spec> {
-    let tab = tabs.active().and_then(|id| tabs.get(id))?;
-    let mut spec = notice::for_tab(tab.notice()?, &tab.name(), tab.file_size());
+    let shown = tabs.active().and_then(|id| tabs.get(id)).and_then(|tab| Some((tab, tab.notice()?)));
+    let Some((tab, shown)) = shown else {
+        // Nothing shows: no mouse state carries over to the next Notice.
+        MOUSE.set(Mouse::default());
+        return None;
+    };
+    let mut spec = notice::for_tab(shown, &tab.name(), tab.file_size());
     spec.mouse = MOUSE.get();
     Some(spec)
 }

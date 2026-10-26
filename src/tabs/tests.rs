@@ -1744,20 +1744,17 @@ fn status_notes_read_as_the_spec_words_them() {
 }
 
 #[test]
-fn a_file_that_goes_missing_forgets_its_identity_so_a_reused_index_is_no_alias() {
-    let mut tabs = Tabs::new();
-    let id = open_with_id(&mut tabs, r"C:\real\a.md", id_of(5), false);
-    tabs.disk_event(&path(r"C:\real\a.md"), None, t0());
-    tabs.close(id);
-    // The first report already drops it: NTFS may hand index 5 to another file.
+fn a_file_missing_only_briefly_keeps_its_identity() {
     let mut tabs = Tabs::new();
     open_with_id(&mut tabs, r"C:\real\a.md", id_of(5), false);
     tabs.disk_event(&path(r"C:\real\a.md"), None, t0());
-    assert!(loads(&tabs.open_with_ids(&[(path(r"C:\new\b.md"), id_of(5))])));
+    tabs.disk_event(&path(r"C:\real\a.md"), as_loaded(), t0() + MISSING_GRACE / 2);
+    assert!(!loads(&tabs.open_with_ids(&[(path(r"C:\alias\a.md"), id_of(5))])));
 }
 
 #[test]
-fn a_file_deleted_on_disk_forgets_its_identity() {
+fn a_file_deleted_on_disk_forgets_its_identity_so_a_reused_index_is_no_alias() {
+    // NTFS may hand index 5 to another file after the delete.
     let mut tabs = Tabs::new();
     open_with_id(&mut tabs, r"C:\real\a.md", id_of(5), false);
     delete_on_disk(&mut tabs, r"C:\real\a.md");
