@@ -48,8 +48,8 @@ cd scrivi
 powershell -ExecutionPolicy Bypass -File scripts\install.ps1
 ```
 
-The script builds with `cargo build --release` (Rust 1.99.1, pinned by
-`rust-toolchain.toml`), then installs as above.
+The script builds with `cargo build --release` using the Rust version pinned in
+`rust-toolchain.toml`, then installs as above.
 
 ## Usage
 
