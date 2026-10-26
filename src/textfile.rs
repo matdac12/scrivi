@@ -6,7 +6,6 @@
 //! The detection order and the NUL-pattern test for BOM-less UTF-16 follow the
 //! approach of Notepad4 (BSD-3, see `THIRD_PARTY_NOTICES.md`); the code is
 //! written for this crate.
-#![allow(dead_code)] // until 08 (open and save) calls it
 
 use std::fmt;
 
@@ -132,6 +131,9 @@ pub struct Decoded {
     pub text: String,
     pub encoding: Encoding,
     pub eol: Eol,
+    /// Some bytes were not valid in `encoding` and became U+FFFD: saving the
+    /// text back would change bytes the user never touched.
+    pub lossy: bool,
 }
 
 /// Characters the chosen encoding cannot represent, each listed once, in
@@ -161,59 +163,69 @@ impl std::error::Error for Unrepresentable {}
 /// the system ANSI code page `ansi_code_page` (what chardetng falls back to
 /// when it only guesses Western European).
 pub fn decode(bytes: &[u8], ansi_code_page: u16) -> Decoded {
-    let (text, encoding) = decode_text(bytes, ansi_code_page);
+    let (text, encoding, lossy) = decode_text(bytes, ansi_code_page);
     let eol = detect_eol(&text);
     Decoded {
         text,
         encoding,
         eol,
+        lossy,
     }
 }
 
 /// Re-read `bytes` in a chosen encoding (Reopen with encoding…). Malformed
 /// sequences become U+FFFD. A matching BOM is stripped.
 pub fn decode_as(bytes: &[u8], encoding: Encoding) -> Decoded {
-    let text = match encoding {
+    let (text, lossy) = match encoding {
         Encoding::Utf8 | Encoding::Utf8Bom => {
-            let b = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(bytes);
-            String::from_utf8_lossy(b).into_owned()
+            utf8_lossy(bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(bytes))
         }
         Encoding::Utf16Le => {
             let b = bytes.strip_prefix(&[0xFF, 0xFE]).unwrap_or(bytes);
-            UTF_16LE.decode_without_bom_handling(b).0.into_owned()
+            with_replacement(UTF_16LE, b)
         }
         Encoding::Utf16Be => {
             let b = bytes.strip_prefix(&[0xFE, 0xFF]).unwrap_or(bytes);
-            UTF_16BE.decode_without_bom_handling(b).0.into_owned()
+            with_replacement(UTF_16BE, b)
         }
-        Encoding::Windows1252 => WINDOWS_1252
-            .decode_without_bom_handling(bytes)
-            .0
-            .into_owned(),
-        Encoding::Other(e) => e.decode_without_bom_handling(bytes).0.into_owned(),
+        Encoding::Windows1252 => with_replacement(WINDOWS_1252, bytes),
+        Encoding::Other(e) => with_replacement(e, bytes),
     };
     let eol = detect_eol(&text);
     Decoded {
         text,
         encoding,
         eol,
+        lossy,
     }
 }
 
-fn decode_text(bytes: &[u8], ansi_code_page: u16) -> (String, Encoding) {
+/// `bytes` as UTF-8, malformed sequences replaced; and whether any were.
+fn utf8_lossy(bytes: &[u8]) -> (String, bool) {
+    match std::str::from_utf8(bytes) {
+        Ok(s) => (s.to_owned(), false),
+        Err(_) => (String::from_utf8_lossy(bytes).into_owned(), true),
+    }
+}
+
+/// `bytes` in `codec`, malformed sequences replaced; and whether any were.
+fn with_replacement(codec: &'static encoding_rs::Encoding, bytes: &[u8]) -> (String, bool) {
+    let (s, lossy) = codec.decode_without_bom_handling(bytes);
+    (s.into_owned(), lossy)
+}
+
+fn decode_text(bytes: &[u8], ansi_code_page: u16) -> (String, Encoding, bool) {
     if let Some(rest) = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]) {
-        return (
-            String::from_utf8_lossy(rest).into_owned(),
-            Encoding::Utf8Bom,
-        );
+        let (s, lossy) = utf8_lossy(rest);
+        return (s, Encoding::Utf8Bom, lossy);
     }
     if let Some(rest) = bytes.strip_prefix(&[0xFF, 0xFE]) {
-        let (s, _) = UTF_16LE.decode_without_bom_handling(rest);
-        return (s.into_owned(), Encoding::Utf16Le);
+        let (s, lossy) = with_replacement(UTF_16LE, rest);
+        return (s, Encoding::Utf16Le, lossy);
     }
     if let Some(rest) = bytes.strip_prefix(&[0xFE, 0xFF]) {
-        let (s, _) = UTF_16BE.decode_without_bom_handling(rest);
-        return (s.into_owned(), Encoding::Utf16Be);
+        let (s, lossy) = with_replacement(UTF_16BE, rest);
+        return (s, Encoding::Utf16Be, lossy);
     }
     if let Some(enc) = sniff_utf16_without_bom(bytes) {
         let codec = if enc == Encoding::Utf16Le {
@@ -222,11 +234,11 @@ fn decode_text(bytes: &[u8], ansi_code_page: u16) -> (String, Encoding) {
             UTF_16BE
         };
         if let Some(s) = codec.decode_without_bom_handling_and_without_replacement(bytes) {
-            return (s.into_owned(), enc);
+            return (s.into_owned(), enc, false);
         }
     }
     if let Ok(s) = std::str::from_utf8(bytes) {
-        return (s.to_owned(), Encoding::Utf8);
+        return (s.to_owned(), Encoding::Utf8, false);
     }
     let mut detector = chardetng::EncodingDetector::new(chardetng::Iso2022JpDetection::Deny);
     detector.feed(bytes, true);
@@ -240,8 +252,8 @@ fn decode_text(bytes: &[u8], ansi_code_page: u16) -> (String, Encoding) {
     } else {
         guess
     };
-    let (s, _) = legacy.decode_without_bom_handling(bytes);
-    (s.into_owned(), Encoding::from_legacy(legacy))
+    let (s, lossy) = with_replacement(legacy, bytes);
+    (s, Encoding::from_legacy(legacy), lossy)
 }
 
 /// BOM-less UTF-16 shows as NUL bytes at every other position. Latin text has
@@ -495,7 +507,8 @@ mod tests {
             Decoded {
                 text: String::new(),
                 encoding: Encoding::Utf8,
-                eol: Eol::Lf
+                eol: Eol::Lf,
+                lossy: false,
             }
         );
         assert_eq!(
@@ -543,6 +556,48 @@ mod tests {
         assert!(decode_as(&bytes, Encoding::Utf8).text.contains('\u{FFFD}'));
         let bom = encode("x", Encoding::Utf8Bom, Eol::Lf).unwrap();
         assert_eq!(decode_as(&bom, Encoding::Utf8).text, "x");
+    }
+
+    #[test]
+    fn clean_files_are_not_lossy() {
+        let bytes = encode(ITALIAN, Encoding::Windows1252, Eol::Lf).unwrap();
+        assert!(!decode(&bytes, 1252).lossy);
+        assert!(!decode_as(&bytes, Encoding::Windows1252).lossy);
+        for enc in Encoding::MENU {
+            let bytes = encode("Ciao è\r\nmondo", enc, Eol::Crlf).unwrap();
+            assert!(!decode(&bytes, 1252).lossy, "{enc}");
+            assert!(!decode_as(&bytes, enc).lossy, "{enc}");
+        }
+        assert!(!decode(&[], 1252).lossy);
+    }
+
+    #[test]
+    fn malformed_bytes_under_a_bom_are_lossy() {
+        // A UTF-8 BOM, then a lone 0xFF.
+        let d = decode(&[0xEF, 0xBB, 0xBF, b'a', 0xFF, b'b'], 1252);
+        assert_eq!((d.encoding, d.lossy), (Encoding::Utf8Bom, true));
+        assert_eq!(d.text, "a\u{FFFD}b");
+        // A UTF-16 LE BOM, then an odd byte count.
+        let d = decode(&[0xFF, 0xFE, b'a', 0, b'b'], 1252);
+        assert_eq!((d.encoding, d.lossy), (Encoding::Utf16Le, true));
+        // A UTF-16 BE BOM, then a lone high surrogate.
+        let d = decode(&[0xFE, 0xFF, 0xD8, 0x3D, 0, b'a'], 1252);
+        assert_eq!((d.encoding, d.lossy), (Encoding::Utf16Be, true));
+    }
+
+    #[test]
+    fn reopening_in_an_encoding_that_does_not_fit_is_lossy() {
+        let bytes = encode(ITALIAN, Encoding::Windows1252, Eol::Lf).unwrap();
+        assert!(decode_as(&bytes, Encoding::Utf8).lossy);
+        assert!(!decode_as(&[b'a', 0], Encoding::Utf16Le).lossy);
+        assert!(decode_as(b"a", Encoding::Utf16Le).lossy);
+    }
+
+    #[test]
+    fn a_legacy_page_with_bytes_it_does_not_map_is_lossy() {
+        // 0x82 0x20 is no Shift_JIS character.
+        let d = decode_as(&[b'a', 0x82, 0x20], Encoding::Other(encoding_rs::SHIFT_JIS));
+        assert!(d.lossy);
     }
 
     #[test]

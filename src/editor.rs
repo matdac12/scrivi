@@ -30,8 +30,11 @@ pub mod sci {
     pub const SCI_GETLENGTH: u32 = 2006;
     pub const SCI_GETCURRENTPOS: u32 = 2008;
     pub const SCI_GETANCHOR: u32 = 2009;
+    pub const SCI_REDO: u32 = 2011;
     pub const SCI_SETUNDOCOLLECTION: u32 = 2012;
+    pub const SCI_SELECTALL: u32 = 2013;
     pub const SCI_SETSAVEPOINT: u32 = 2014;
+    pub const SCI_CANREDO: u32 = 2016;
     pub const SCI_GOTOPOS: u32 = 2025;
     pub const SCI_SETANCHOR: u32 = 2026;
     pub const SCI_CONVERTEOLS: u32 = 2029;
@@ -63,7 +66,13 @@ pub mod sci {
     pub const SCI_LINEFROMPOSITION: u32 = 2166;
     pub const SCI_POSITIONFROMLINE: u32 = 2167;
     pub const SCI_SETREADONLY: u32 = 2171;
+    pub const SCI_CANPASTE: u32 = 2173;
+    pub const SCI_CANUNDO: u32 = 2174;
     pub const SCI_EMPTYUNDOBUFFER: u32 = 2175;
+    pub const SCI_UNDO: u32 = 2176;
+    pub const SCI_CUT: u32 = 2177;
+    pub const SCI_COPY: u32 = 2178;
+    pub const SCI_PASTE: u32 = 2179;
     pub const SCI_GETDIRECTFUNCTION: u32 = 2184;
     pub const SCI_GETDIRECTPOINTER: u32 = 2185;
     pub const SCI_SETCARETWIDTH: u32 = 2188;
@@ -96,6 +105,7 @@ pub mod sci {
     pub const SCI_SETADDITIONALSELECTIONTYPING: u32 = 2565;
     pub const SCI_SETTECHNOLOGY: u32 = 2630;
     pub const SCI_COUNTCHARACTERS: u32 = 2633;
+    pub const SCI_GETSELECTIONEMPTY: u32 = 2650;
     pub const SCI_SETELEMENTCOLOUR: u32 = 2753;
     pub const SCI_SETSELECTIONLAYER: u32 = 2763;
     pub const SCI_SETCARETLINELAYER: u32 = 2765;
@@ -126,6 +136,8 @@ pub mod sci {
     pub const INDIC_STRIKE: isize = 4;
     pub const SC_MOD_EDITS: usize = (SC_MOD_INSERTTEXT | SC_MOD_DELETETEXT) as usize;
     pub const SCN_STYLENEEDED: u32 = 2000;
+    pub const SCN_SAVEPOINTREACHED: u32 = 2002;
+    pub const SCN_SAVEPOINTLEFT: u32 = 2003;
     pub const SCN_UPDATEUI: u32 = 2007;
     pub const SCN_MODIFIED: u32 = 2008;
     pub const SCN_PAINTED: u32 = 2013;

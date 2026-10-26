@@ -15,7 +15,8 @@ use windows::Win32::Graphics::Direct2D::{
 };
 use windows::Win32::Graphics::DirectWrite::{
     DWriteCreateFactory, IDWriteFactory, IDWriteTextFormat, DWRITE_FACTORY_TYPE_SHARED, DWRITE_FONT_STRETCH_NORMAL,
-    DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_MEASURING_MODE_NATURAL,
+    DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_HIT_TEST_METRICS, DWRITE_LINE_METRICS,
+    DWRITE_MEASURING_MODE_NATURAL,
     DWRITE_PARAGRAPH_ALIGNMENT_CENTER, DWRITE_TEXT_ALIGNMENT, DWRITE_TEXT_ALIGNMENT_CENTER,
     DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_TEXT_METRICS, DWRITE_TRIMMING, DWRITE_TRIMMING_GRANULARITY_CHARACTER,
     DWRITE_WORD_WRAPPING_NO_WRAP,
@@ -86,6 +87,10 @@ pub struct View<'a> {
     pub pressed: Option<Hit>,
     /// The Window is the foreground window: caption glyphs are darker.
     pub active: bool,
+    /// The menu button the keyboard highlights, or whose popup is open.
+    pub menu_focus: Option<usize>,
+    /// Underline the menus' access keys (Alt held, or the keyboard is on the menu bar).
+    pub access_keys: bool,
 }
 
 struct Fonts {
@@ -189,6 +194,7 @@ fn intersects(a: Rect, b: &RECT) -> bool {
 /// Draws with one target and one pass offset.
 struct Pass<'a> {
     rt: &'a ID2D1DCRenderTarget,
+    dw: &'a IDWriteFactory,
     fonts: &'a Fonts,
     oy: i32,
     scale: f32,
@@ -221,6 +227,32 @@ impl Pass<'_> {
             )
         };
         Ok(())
+    }
+
+    /// `text`, with its first character underlined: an access key. The
+    /// line goes under that character as DirectWrite lays it out in `r`; if
+    /// that can't be measured, the text shows without it.
+    fn text_keyed(&self, s: &str, f: &IDWriteTextFormat, r: Rect, c: u32) -> Result<()> {
+        self.text(s, f, r, c)?;
+        let _ = self.underline_first(s, f, r, c);
+        Ok(())
+    }
+
+    fn underline_first(&self, s: &str, f: &IDWriteTextFormat, r: Rect, c: u32) -> Result<()> {
+        unsafe {
+            let layout = self.dw.CreateTextLayout(&wide(s), f, (r.right - r.left) as f32, (r.bottom - r.top) as f32)?;
+            let (mut x, mut y) = (0.0, 0.0);
+            let mut hit = DWRITE_HIT_TEST_METRICS::default();
+            layout.HitTestTextPosition(0, false, &mut x, &mut y, &mut hit)?;
+            let mut line = [DWRITE_LINE_METRICS::default()];
+            let mut lines = 0;
+            layout.GetLineMetrics(Some(&mut line), &mut lines)?;
+            let left = r.left + hit.left.round() as i32;
+            let top = r.top + (hit.top + line[0].baseline).round() as i32 + self.px(1.5);
+            let (right, bottom) = (left + hit.width.round() as i32, top + self.px(1.0).max(1));
+            let underline = Rect { left, top, right, bottom };
+            self.fill(underline, c, 1.0)
+        }
     }
 
     /// The rounded hover (or pressed) shade of a small button.
@@ -301,7 +333,7 @@ impl Painter {
             if !intersects(band, dirty) {
                 continue;
             }
-            let pass = Pass { rt: &rt, fonts: &self.fonts, oy: band.top, scale: self.scale };
+            let pass = Pass { rt: &rt, dw: &self.dw, fonts: &self.fonts, oy: band.top, scale: self.scale };
             let bounds = RECT { left: band.left, top: band.top, right: band.right, bottom: band.bottom };
             result = unsafe {
                 rt.BindDC(hdc, &bounds).and_then(|()| {
@@ -365,10 +397,14 @@ fn draw_top(p: &Pass, v: &View) -> Result<()> {
     p.fill(Rect { top: title.bottom - hair, ..title }, colour::HAIRLINE, 1.0)?;
 
     for (i, (r, name)) in l.menus.iter().zip(MENU_NAMES).enumerate() {
-        if v.hover == Some(Hit::Menu(i)) || v.pressed == Some(Hit::Menu(i)) {
+        if v.hover == Some(Hit::Menu(i)) || v.pressed == Some(Hit::Menu(i)) || v.menu_focus == Some(i) {
             p.fill_rounded(*r, SMALL_RADIUS, colour::MENU_HOVER, 1.0)?;
         }
-        p.text(name, &f.menu, *r, colour::MENU_TEXT)?;
+        if v.access_keys {
+            p.text_keyed(name, &f.menu, *r, colour::MENU_TEXT)?;
+        } else {
+            p.text(name, &f.menu, *r, colour::MENU_TEXT)?;
+        }
     }
     p.fill(l.divider, colour::DIVIDER, 1.0)?;
 

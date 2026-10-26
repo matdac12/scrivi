@@ -2,21 +2,28 @@
 //! launches with paths add Tabs or switch to one already open. The debug
 //! resident writes its strip to `SCRIVI_TEST_TABS` after each hand-off.
 //!
-//! Needs the `Scrivi.Window` class free: end any running scrivi.exe first.
+//! Its processes share a `SCRIVI_TEST_INSTANCE` of their own (debug builds
+//! suffix the window class and mutex with it): no running scrivi interferes.
 
 use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
 use std::time::{Duration, Instant};
 
-use windows::core::{w, PCWSTR};
+use windows::core::{HSTRING, PCWSTR};
 use windows::Win32::UI::WindowsAndMessaging::FindWindowW;
 
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+/// This test's own resident.
+fn instance() -> String {
+    format!("{}-tabs", std::process::id())
+}
+
 const EXE: &str = env!("CARGO_BIN_EXE_scrivi");
 
 fn resident_up() -> bool {
-    unsafe { FindWindowW(w!("Scrivi.Window"), PCWSTR::null()) }.is_ok()
+    unsafe { FindWindowW(&HSTRING::from(format!("Scrivi.Window.{}", instance())), PCWSTR::null()) }.is_ok()
 }
 
 fn wait_until(what: &str, mut f: impl FnMut() -> bool) {
@@ -40,6 +47,7 @@ impl Run {
         c.args(args)
             .env("SCRIVI_TEST_LOG", self.dir.join("requests.log"))
             .env("SCRIVI_TEST_TABS", self.dir.join("tabs.txt"))
+            .env("SCRIVI_TEST_INSTANCE", instance())
             .env("SCRIVI_TEST_ALLOW_ELEVATED", "1")
             .creation_flags(CREATE_NO_WINDOW);
         c
@@ -68,7 +76,7 @@ impl Drop for Resident {
 
 #[test]
 fn launches_open_tabs_in_the_one_window() {
-    assert!(!resident_up(), "a Scrivi.Window already exists: end any running scrivi.exe and retry");
+    assert!(!resident_up());
     let dir = std::env::temp_dir().join(format!("scrivi-tabs-test-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let run = Run { dir: dir.clone() };

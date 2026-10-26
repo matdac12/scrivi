@@ -19,7 +19,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     SendMessageTimeoutW, SMTO_ABORTIFHUNG, WM_COPYDATA,
 };
 
-use crate::proto::{CLASS, COPYDATA_REQUEST, MUTEX};
+use crate::proto::{self, COPYDATA_REQUEST};
 
 /// What a launch asks the Window to do.
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -98,7 +98,7 @@ fn absolutize(request: Request) -> Request {
 }
 
 fn find_resident() -> Option<HWND> {
-    unsafe { FindWindowW(CLASS, PCWSTR::null()) }.ok()
+    unsafe { FindWindowW(proto::class(), PCWSTR::null()) }.ok()
 }
 
 /// Elevation of this process. Debug builds only: `SCRIVI_TEST_ALLOW_ELEVATED=1`
@@ -205,7 +205,7 @@ pub fn run(args: &[String]) -> i32 {
                 }
                 return hand_off_when_up(&request);
             }
-            let Ok(mutex) = (unsafe { CreateMutexW(None, true, MUTEX) }) else { return 1 };
+            let Ok(mutex) = (unsafe { CreateMutexW(None, true, proto::mutex()) }) else { return 1 };
             if unsafe { GetLastError() } == ERROR_ALREADY_EXISTS {
                 // Another launch won the race and is still creating its Window.
                 unsafe {

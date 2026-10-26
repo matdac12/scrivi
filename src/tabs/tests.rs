@@ -34,6 +34,7 @@ fn file(size: u64) -> LoadedFile {
         eol: Eol::Lf,
         stat: stat(size, 100),
         text_len: size as usize,
+        lossy: false,
     }
 }
 
@@ -1115,6 +1116,176 @@ fn reopen_with_encoding_does_nothing_for_an_untitled_tab() {
     assert_eq!(tabs.reopen_with_encoding(id, Encoding::Utf16Le), []);
 }
 
+// --- §7 The save point (SCRIVI-16) ---------------------------------------
+
+#[test]
+fn leaving_the_save_point_marks_the_tab_unsaved() {
+    let mut tabs = Tabs::new();
+    let id = open_file(&mut tabs, r"C:\a.txt");
+    assert_eq!(tabs.save_point_left(id), [Action::Changed(id)]);
+    assert!(tabs.get(id).unwrap().unsaved());
+    assert_eq!(tabs.save_point_left(id), []);
+}
+
+#[test]
+fn undoing_back_to_the_save_point_clears_the_unsaved_dot() {
+    let mut tabs = Tabs::new();
+    let id = edited_file(&mut tabs, r"C:\a.txt");
+    assert_eq!(tabs.save_point_reached(id), [Action::Changed(id)]);
+    assert!(!tabs.get(id).unwrap().unsaved());
+    assert_eq!(tabs.save_point_reached(id), []);
+}
+
+#[test]
+fn back_at_the_save_point_a_line_ending_choice_still_needs_saving() {
+    let mut tabs = Tabs::new();
+    let id = open_file(&mut tabs, r"C:\a.txt");
+    tabs.set_eol(id, Eol::Crlf);
+    tabs.save_point_left(id);
+    tabs.save_point_reached(id);
+    assert!(tabs.get(id).unwrap().unsaved());
+}
+
+#[test]
+fn back_at_the_save_point_an_encoding_choice_still_needs_saving() {
+    let mut tabs = Tabs::new();
+    let id = edited_file(&mut tabs, r"C:\a.txt");
+    tabs.set_encoding(id, Encoding::Utf16Le);
+    assert_eq!(tabs.save_point_reached(id), []);
+    assert!(tabs.get(id).unwrap().unsaved());
+}
+
+#[test]
+fn back_at_the_save_point_a_file_deleted_on_disk_stays_unsaved() {
+    let mut tabs = Tabs::new();
+    let id = edited_file(&mut tabs, r"C:\notes.md");
+    delete_on_disk(&mut tabs, r"C:\notes.md");
+    tabs.save_point_reached(id);
+    assert!(tabs.get(id).unwrap().unsaved());
+}
+
+#[test]
+fn a_save_clears_line_ending_and_encoding_choices_too() {
+    let mut tabs = Tabs::new();
+    let id = open_file(&mut tabs, r"C:\a.txt");
+    tabs.set_eol(id, Eol::Crlf);
+    tabs.set_encoding(id, Encoding::Utf8Bom);
+    tabs.saved(id, path(r"C:\a.txt"), stat(12, 200), t0());
+    assert!(!tabs.get(id).unwrap().unsaved());
+    // Undoing past the new save point is an edit again.
+    tabs.save_point_left(id);
+    assert!(tabs.get(id).unwrap().unsaved());
+}
+
+#[test]
+fn the_save_point_of_a_read_only_tab_is_ignored() {
+    let mut tabs = Tabs::new();
+    let id = open_sized(&mut tabs, r"C:\large.log", LARGE_FILE_BYTES + 1);
+    assert_eq!(tabs.save_point_left(id), []);
+    assert!(!tabs.get(id).unwrap().unsaved());
+}
+
+// --- §7 Bytes the encoding cannot hold (SCRIVI-16) -------------------------
+
+fn open_lossy(tabs: &mut Tabs, p: &str) -> TabId {
+    let id = added(&tabs.open(&[path(p)]));
+    tabs.loaded(id, LoadedFile { lossy: true, ..file(10) });
+    id
+}
+
+#[test]
+fn a_file_with_bytes_its_encoding_cannot_hold_opens_read_only_with_a_note() {
+    let mut tabs = Tabs::new();
+    let id = open_lossy(&mut tabs, r"C:\odd.txt");
+    let tab = tabs.get(id).unwrap();
+    assert!(tab.read_only());
+    assert!(tab.wrap_allowed());
+    assert_eq!(tab.status_note(), Some(StatusNote::InvalidBytes));
+    assert!(!tab.unsaved());
+}
+
+#[test]
+fn a_lossy_tab_refuses_edits_and_encoding_or_line_ending_changes() {
+    let mut tabs = Tabs::new();
+    let id = open_lossy(&mut tabs, r"C:\odd.txt");
+    assert_eq!(tabs.edited(id, 1), []);
+    assert_eq!(tabs.save_point_left(id), []);
+    assert_eq!(tabs.set_eol(id, Eol::Crlf), []);
+    assert_eq!(tabs.set_encoding(id, Encoding::Utf16Le), []);
+    assert!(!tabs.get(id).unwrap().unsaved());
+}
+
+#[test]
+fn saving_a_lossy_tab_over_its_file_is_refused_with_its_note() {
+    let mut tabs = Tabs::new();
+    let id = open_lossy(&mut tabs, r"C:\odd.txt");
+    assert_eq!(tabs.save(id), [Action::Flash(StatusNote::InvalidBytes)]);
+    assert_eq!(
+        tabs.save_as_chosen(id, path(r"C:\ODD.txt")),
+        [Action::Flash(StatusNote::InvalidBytes)]
+    );
+    assert!(matches!(
+        tabs.save_as_chosen(id, path(r"C:\copy.txt"))[..],
+        [Action::Write { .. }]
+    ));
+}
+
+#[test]
+fn a_refused_lossy_save_calls_off_the_close_waiting_on_it() {
+    let mut tabs = Tabs::new();
+    let id = open_lossy(&mut tabs, r"C:\odd.txt");
+    delete_on_disk(&mut tabs, r"C:\odd.txt");
+    assert!(matches!(tabs.close(id)[..], [.., Action::AskSaveBeforeClose(_)]));
+    assert_eq!(
+        tabs.close_reply(id, CloseReply::Save),
+        [Action::Flash(StatusNote::InvalidBytes)]
+    );
+    // The close was called off: saving a copy later does not close the Tab.
+    tabs.save_as_chosen(id, path(r"C:\copy.txt"));
+    let actions = tabs.saved(id, path(r"C:\copy.txt"), stat(10, 300), t0());
+    assert!(!actions.iter().any(|a| matches!(a, Action::Closed { .. })));
+}
+
+#[test]
+fn a_saved_copy_of_a_lossy_tab_is_editable_it_holds_what_the_tab_shows() {
+    let mut tabs = Tabs::new();
+    let id = open_lossy(&mut tabs, r"C:\odd.txt");
+    tabs.save_as_chosen(id, path(r"C:\copy.txt"));
+    tabs.saved(id, path(r"C:\copy.txt"), stat(10, 300), t0());
+    let tab = tabs.get(id).unwrap();
+    assert!(!tab.read_only());
+    assert_eq!(tab.status_note(), None);
+}
+
+#[test]
+fn save_as_utf8_instead_switches_the_encoding_even_of_a_read_only_tab() {
+    let mut tabs = Tabs::new();
+    let id = added(&tabs.open(&[path(r"C:\odd.txt")]));
+    tabs.loaded(
+        id,
+        LoadedFile { encoding: Encoding::Other(encoding_rs::SHIFT_JIS), lossy: true, ..file(10) },
+    );
+    assert_eq!(tabs.use_utf8_instead(id), [Action::Changed(id)]);
+    let tab = tabs.get(id).unwrap();
+    assert_eq!(tab.encoding(), Encoding::Utf8);
+    assert!(tab.unsaved());
+    assert_eq!(tabs.use_utf8_instead(id), []);
+}
+
+#[test]
+fn reopening_a_lossy_tab_in_an_encoding_that_fits_makes_it_editable() {
+    let mut tabs = Tabs::new();
+    let id = open_lossy(&mut tabs, r"C:\odd.txt");
+    assert!(matches!(
+        tabs.reopen_with_encoding(id, Encoding::Windows1252)[..],
+        [Action::Load { encoding: Some(Encoding::Windows1252), .. }]
+    ));
+    tabs.loaded(id, LoadedFile { encoding: Encoding::Windows1252, ..file(10) });
+    let tab = tabs.get(id).unwrap();
+    assert!(!tab.read_only());
+    assert_eq!(tab.status_note(), None);
+}
+
 // --- §7 Large files -------------------------------------------------------
 
 #[test]
@@ -1487,4 +1658,9 @@ fn status_notes_read_as_the_spec_words_them() {
     assert_eq!(StatusNote::StylingOff.text(), "Markdown styling off (over 1 MB)");
     assert_eq!(StatusNote::RenderedView.text(), "Rendered view \u{b7} Esc to edit");
     assert_eq!(StatusNote::TooLargeToRender.text(), "Too large to render");
+    assert_eq!(StatusNote::SavedInPlace.text(), "Saved in place: the safe replace failed");
+    assert_eq!(
+        StatusNote::InvalidBytes.text(),
+        "Read-only: some bytes don\u{2019}t fit this encoding \u{b7} Encoding \u{203a} Reopen with encoding\u{2026}"
+    );
 }
