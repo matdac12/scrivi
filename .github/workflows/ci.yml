@@ -11,6 +11,11 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --check
       - run: cargo build --release
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test
+      - name: Install tests (Windows PowerShell 5.1)
+        run: powershell -NoProfile -File scripts\install.tests.ps1
+      - name: Install tests (PowerShell 7)
+        run: pwsh -NoProfile -File scripts\install.tests.ps1
