@@ -32,7 +32,12 @@ fn test_instance() -> Option<String> {
 }
 
 fn instanced(cell: &'static OnceLock<Vec<u16>>, base: &str) -> PCWSTR {
-    let name = cell.get_or_init(|| name(base, test_instance().as_deref()).encode_utf16().chain(Some(0)).collect());
+    let name = cell.get_or_init(|| {
+        name(base, test_instance().as_deref())
+            .encode_utf16()
+            .chain(Some(0))
+            .collect()
+    });
     PCWSTR(name.as_ptr())
 }
 
@@ -41,7 +46,16 @@ fn instanced(cell: &'static OnceLock<Vec<u16>>, base: &str) -> PCWSTR {
 fn name(base: &str, instance: Option<&str>) -> String {
     match instance.filter(|i| !i.is_empty()) {
         Some(i) => {
-            let safe: String = i.chars().map(|c| if c.is_ascii_alphanumeric() || c == '-' { c } else { '_' }).collect();
+            let safe: String = i
+                .chars()
+                .map(|c| {
+                    if c.is_ascii_alphanumeric() || c == '-' {
+                        c
+                    } else {
+                        '_'
+                    }
+                })
+                .collect();
             format!("{base}.{safe}")
         }
         None => base.to_string(),
@@ -98,7 +112,10 @@ mod tests {
     fn a_test_instance_suffixes_the_class_and_mutex_names() {
         assert_eq!(name("Scrivi.Window", None), "Scrivi.Window");
         assert_eq!(name("Scrivi.Window", Some("")), "Scrivi.Window");
-        assert_eq!(name("Local\\Scrivi.Resident", Some("4242-save")), "Local\\Scrivi.Resident.4242-save");
+        assert_eq!(
+            name("Local\\Scrivi.Resident", Some("4242-save")),
+            "Local\\Scrivi.Resident.4242-save"
+        );
         assert_eq!(name("Scrivi.Window", Some("a\\b c")), "Scrivi.Window.a_b_c");
     }
 

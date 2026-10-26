@@ -111,7 +111,12 @@ impl Parts {
         let px = |dip: f32| (dip * scale).round() as i32;
         let centred = |left: i32, right: i32, height: f32| {
             let top = band.top + (band.bottom - band.top - px(height)) / 2;
-            Rect { left, top, right: right.max(left), bottom: top + px(height) }
+            Rect {
+                left,
+                top,
+                right: right.max(left),
+                bottom: top + px(height),
+            }
         };
         let mut right = band.right - px(PAD_R);
         let close = closable.then(|| {
@@ -133,8 +138,17 @@ impl Parts {
             .collect();
         buttons.reverse();
         let left = band.left + px(PAD_L);
-        let message = Rect { left, top: band.top, right: (right - px(GAP)).max(left), bottom: band.bottom };
-        Parts { message, buttons, close }
+        let message = Rect {
+            left,
+            top: band.top,
+            right: (right - px(GAP)).max(left),
+            bottom: band.bottom,
+        };
+        Parts {
+            message,
+            buttons,
+            close,
+        }
     }
 
     pub fn hit(&self, x: i32, y: i32) -> Option<Hit> {
@@ -163,15 +177,25 @@ fn megabytes(bytes: u64) -> String {
 }
 
 fn plain(text: &str) -> Span {
-    Span { text: text.to_string(), strong: false }
+    Span {
+        text: text.to_string(),
+        strong: false,
+    }
 }
 
 fn strong(text: &str) -> Span {
-    Span { text: text.to_string(), strong: true }
+    Span {
+        text: text.to_string(),
+        strong: true,
+    }
 }
 
 fn button(label: &str, primary: bool, action: NoticeAction) -> Button {
-    Button { label: label.to_string(), primary, action }
+    Button {
+        label: label.to_string(),
+        primary,
+        action,
+    }
 }
 
 /// The Notice a Tab shows (spec §4): its `notice`, the file name and size.
@@ -211,7 +235,13 @@ pub fn for_tab(notice: tabs::Notice, name: &str, size: Option<u64>) -> Spec {
 }
 
 /// Paint the band `parts` was placed in. `measure` gives a span's width in pixels.
-pub(super) fn draw(p: &Pass, v: &View, spec: &Spec, parts: &Parts, measure: &dyn Fn(&str, bool) -> f32) -> Result<()> {
+pub(super) fn draw(
+    p: &Pass,
+    v: &View,
+    spec: &Spec,
+    parts: &Parts,
+    measure: &dyn Fn(&str, bool) -> f32,
+) -> Result<()> {
     let band = v.layout.notice;
     let (back, border, ink) = match spec.kind {
         Kind::Amber => (colour::AMBER_BACK, colour::AMBER_BORDER, colour::AMBER_TEXT),
@@ -219,16 +249,31 @@ pub(super) fn draw(p: &Pass, v: &View, spec: &Spec, parts: &Parts, measure: &dyn
     };
     p.fill(band, back, 1.0)?;
     let hair = p.px(1.0).max(1);
-    p.fill(Rect { top: band.bottom - hair, ..band }, border, 1.0)?;
+    p.fill(
+        Rect {
+            top: band.bottom - hair,
+            ..band
+        },
+        border,
+        1.0,
+    )?;
 
     let mut x = parts.message.left;
     for span in &spec.message {
         let width = measure(&span.text, span.strong).ceil() as i32;
-        let r = Rect { left: x, right: (x + width).min(parts.message.right), ..parts.message };
+        let r = Rect {
+            left: x,
+            right: (x + width).min(parts.message.right),
+            ..parts.message
+        };
         if r.right <= r.left {
             break;
         }
-        let font = if span.strong { &p.fonts.notice_strong } else { &p.fonts.notice };
+        let font = if span.strong {
+            &p.fonts.notice_strong
+        } else {
+            &p.fonts.notice
+        };
         p.text(&span.text, font, r, ink)?;
         x += width;
     }
@@ -282,14 +327,24 @@ mod tests {
     use super::*;
 
     fn band() -> Rect {
-        Rect { left: 0, top: 42, right: 1000, bottom: 80 }
+        Rect {
+            left: 0,
+            top: 42,
+            right: 1000,
+            bottom: 80,
+        }
     }
 
     #[test]
     fn the_large_file_notice_says_the_size_and_closes_with_an_x() {
         let spec = for_tab(tabs::Notice::LargeFile, "big.log", Some(212 * 1024 * 1024));
         assert_eq!(spec.kind, Kind::Amber);
-        assert_eq!(spec.message, [plain("Large file (212 MB): read-only, without wrap or styling.")]);
+        assert_eq!(
+            spec.message,
+            [plain(
+                "Large file (212 MB): read-only, without wrap or styling."
+            )]
+        );
         assert!(spec.buttons.is_empty());
         assert_eq!(spec.action(Hit::Close), Some(NoticeAction::Dismiss));
     }
@@ -305,7 +360,11 @@ mod tests {
         let spec = for_tab(tabs::Notice::DiskChange, "notes.md", None);
         assert_eq!(spec.kind, Kind::Amber);
         assert_eq!(spec.message[0], strong("notes.md"));
-        let labels: Vec<_> = spec.buttons.iter().map(|b| (b.label.as_str(), b.primary)).collect();
+        let labels: Vec<_> = spec
+            .buttons
+            .iter()
+            .map(|b| (b.label.as_str(), b.primary))
+            .collect();
         assert_eq!(labels, [("Keep mine", false), ("Reload", true)]);
         assert!(!spec.closable);
         assert_eq!(spec.action(Hit::Button(1)), Some(NoticeAction::Reload));
@@ -376,7 +435,17 @@ mod tests {
 
     #[test]
     fn pieces_fit_inside_the_band_at_150_percent() {
-        let parts = Parts::new(Rect { left: 0, top: 63, right: 1500, bottom: 120 }, 1.5, &[60.0], true);
+        let parts = Parts::new(
+            Rect {
+                left: 0,
+                top: 63,
+                right: 1500,
+                bottom: 120,
+            },
+            1.5,
+            &[60.0],
+            true,
+        );
         for r in parts.buttons.iter().chain(parts.close.iter()) {
             assert!(r.top >= 63 && r.bottom <= 120);
         }

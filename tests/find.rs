@@ -16,8 +16,9 @@ use windows::Win32::Foundation::{HWND, LPARAM, POINT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::ScreenToClient;
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::WindowsAndMessaging::{
-    FindWindowExW, FindWindowW, GetDlgItem, GetWindowLongPtrW, GetWindowRect, PostMessageW, SendMessageW, GWL_STYLE,
-    WM_CHAR, WM_COMMAND, WM_KEYDOWN, WM_LBUTTONDOWN, WM_SETTEXT, WS_VISIBLE,
+    FindWindowExW, FindWindowW, GetDlgItem, GetWindowLongPtrW, GetWindowRect, PostMessageW,
+    SendMessageW, GWL_STYLE, WM_CHAR, WM_COMMAND, WM_KEYDOWN, WM_LBUTTONDOWN, WM_SETTEXT,
+    WS_VISIBLE,
 };
 
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -39,7 +40,13 @@ fn instance() -> String {
 }
 
 fn resident() -> Option<HWND> {
-    unsafe { FindWindowW(&HSTRING::from(format!("Scrivi.Window.{}", instance())), PCWSTR::null()) }.ok()
+    unsafe {
+        FindWindowW(
+            &HSTRING::from(format!("Scrivi.Window.{}", instance())),
+            PCWSTR::null(),
+        )
+    }
+    .ok()
 }
 
 fn wait_until(what: &str, limit: Duration, mut f: impl FnMut() -> bool) {
@@ -73,14 +80,20 @@ impl Run {
     }
 
     fn strip(&self) -> Vec<String> {
-        std::fs::read_to_string(self.dir.join("tabs.txt")).unwrap_or_default().lines().map(String::from).collect()
+        std::fs::read_to_string(self.dir.join("tabs.txt"))
+            .unwrap_or_default()
+            .lines()
+            .map(String::from)
+            .collect()
     }
 
     /// Hand `file` to the resident and wait until its Tab is the active one.
     fn show(&self, file: &Path) {
         assert!(self.scrivi(&[file]).status().unwrap().success());
         let want = format!("*{}", file.file_name().unwrap().to_string_lossy());
-        wait_until(&format!("{want} active"), LONG, || self.strip().contains(&want));
+        wait_until(&format!("{want} active"), LONG, || {
+            self.strip().contains(&want)
+        });
     }
 }
 
@@ -112,7 +125,8 @@ fn input(hwnd: HWND, id: i32) -> HWND {
     let mut found = HWND::default();
     wait_until(&format!("input {id:#x}"), SHORT, || {
         found = unsafe { GetDlgItem(Some(hwnd), id) }.unwrap_or_default();
-        !found.is_invalid() && unsafe { GetWindowLongPtrW(found, GWL_STYLE) } as u32 & WS_VISIBLE.0 != 0
+        !found.is_invalid()
+            && unsafe { GetWindowLongPtrW(found, GWL_STYLE) } as u32 & WS_VISIBLE.0 != 0
     });
     found
 }
@@ -127,11 +141,17 @@ fn save_and_wait(hwnd: HWND, file: &Path, limit: Duration) {
     let long_ago = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000_000);
     // A save in flight (ReplaceFileW) leaves the path missing or locked for a moment.
     wait_until("the file to be writable", SHORT, || {
-        std::fs::File::options().write(true).open(file).and_then(|f| f.set_modified(long_ago)).is_ok()
+        std::fs::File::options()
+            .write(true)
+            .open(file)
+            .and_then(|f| f.set_modified(long_ago))
+            .is_ok()
     });
     command(hwnd, SAVE);
     wait_until(&format!("{} saved", file.display()), limit, || {
-        std::fs::metadata(file).and_then(|m| m.modified()).is_ok_and(|t| t != long_ago)
+        std::fs::metadata(file)
+            .and_then(|m| m.modified())
+            .is_ok_and(|t| t != long_ago)
     });
 }
 
@@ -170,7 +190,10 @@ fn replace_all_is_one_undo_step_and_go_to_line_works_in_a_50_mb_file() {
     let scale = unsafe { GetDpiForWindow(hwnd) } as f32 / 96.0;
     let mut r = RECT::default();
     unsafe { GetWindowRect(replace, &mut r) }.unwrap();
-    let mut at = POINT { x: r.right + (96.0 * scale + 30.0 * scale) as i32, y: (r.top + r.bottom) / 2 };
+    let mut at = POINT {
+        x: r.right + (96.0 * scale + 30.0 * scale) as i32,
+        y: (r.top + r.bottom) / 2,
+    };
     unsafe { ScreenToClient(hwnd, &mut at) }.ok().unwrap();
     let lparam = LPARAM((at.x as isize & 0xffff) | ((at.y as isize & 0xffff) << 16));
     unsafe { PostMessageW(Some(hwnd), WM_LBUTTONDOWN, WPARAM(1), lparam) }.unwrap();
@@ -192,12 +215,24 @@ fn replace_all_is_one_undo_step_and_go_to_line_works_in_a_50_mb_file() {
     let goto = input(hwnd, ID_GOTO);
     type_into(goto, "1000000");
     unsafe { SendMessageW(goto, WM_KEYDOWN, Some(WPARAM(VK_RETURN)), Some(LPARAM(0))) };
-    let editor = unsafe { FindWindowExW(Some(hwnd), None, &HSTRING::from("Scintilla"), PCWSTR::null()) }.unwrap();
+    let editor = unsafe {
+        FindWindowExW(
+            Some(hwnd),
+            None,
+            &HSTRING::from("Scintilla"),
+            PCWSTR::null(),
+        )
+    }
+    .unwrap();
     unsafe { SendMessageW(editor, WM_CHAR, Some(WPARAM('X' as usize)), Some(LPARAM(0))) };
     save_and_wait(hwnd, &big, LONG);
     let saved = read_settled(&big);
     let at = 999_999 * 32;
-    assert_eq!(&saved[at..at + 6], b"Xline ", "line 1,000,000 starts at byte {at}");
+    assert_eq!(
+        &saved[at..at + 6],
+        b"Xline ",
+        "line 1,000,000 starts at byte {at}"
+    );
     assert_eq!(saved.len(), 50 * 1024 * 1024 + 1);
     assert_eq!(&saved[..5], b"line ");
 

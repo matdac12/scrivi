@@ -1194,7 +1194,14 @@ fn id_of(index: u64) -> Option<FileId> {
 
 fn open_with_id(tabs: &mut Tabs, p: &str, file_id: Option<FileId>, lossy: bool) -> TabId {
     let id = added(&tabs.open(&[path(p)]));
-    tabs.loaded(id, LoadedFile { file_id, lossy, ..file(10) });
+    tabs.loaded(
+        id,
+        LoadedFile {
+            file_id,
+            lossy,
+            ..file(10)
+        },
+    );
     id
 }
 
@@ -1227,7 +1234,9 @@ fn save_as_onto_an_alias_of_an_open_tabs_file_is_refused() {
     let id = edited_untitled(&mut tabs);
     assert_eq!(
         tabs.save_as_chosen_with_id(id, path(r"C:\junction\a.md"), id_of(5)),
-        [Action::OpenInAnotherTab { name: "a.md".into() }]
+        [Action::OpenInAnotherTab {
+            name: "a.md".into()
+        }]
     );
     assert_eq!(tabs.get(other).unwrap().notice(), None);
 }
@@ -1237,7 +1246,10 @@ fn save_as_onto_an_alias_of_a_lossy_tabs_own_file_is_refused() {
     let mut tabs = Tabs::new();
     let id = open_with_id(&mut tabs, r"C:\real\odd.txt", id_of(5), true);
     let actions = tabs.save_as_chosen_with_id(id, path(r"C:\junction\odd.txt"), id_of(5));
-    assert!(!actions.iter().any(|a| matches!(a, Action::Write { .. })), "{actions:?}");
+    assert!(
+        !actions.iter().any(|a| matches!(a, Action::Write { .. })),
+        "{actions:?}"
+    );
 }
 
 #[test]
@@ -1260,14 +1272,22 @@ fn a_saved_tab_remembers_the_identity_of_the_file_it_wrote() {
     let mut tabs = Tabs::new();
     let id = edited_untitled(&mut tabs);
     tabs.saved_with_id(id, path(r"C:\new.md"), stat(5, 1), id_of(8), t0());
-    assert!(!loads(&tabs.open_with_ids(&[(path(r"C:\alias\new.md"), id_of(8))])));
+    assert!(!loads(
+        &tabs.open_with_ids(&[(path(r"C:\alias\new.md"), id_of(8))])
+    ));
 }
 
 // --- §7 Bytes the encoding cannot hold (SCRIVI-16) -------------------------
 
 fn open_lossy(tabs: &mut Tabs, p: &str) -> TabId {
     let id = added(&tabs.open(&[path(p)]));
-    tabs.loaded(id, LoadedFile { lossy: true, ..file(10) });
+    tabs.loaded(
+        id,
+        LoadedFile {
+            lossy: true,
+            ..file(10)
+        },
+    );
     id
 }
 
@@ -1313,7 +1333,10 @@ fn a_refused_lossy_save_calls_off_the_close_waiting_on_it() {
     let mut tabs = Tabs::new();
     let id = open_lossy(&mut tabs, r"C:\odd.txt");
     delete_on_disk(&mut tabs, r"C:\odd.txt");
-    assert!(matches!(tabs.close(id)[..], [.., Action::AskSaveBeforeClose(_)]));
+    assert!(matches!(
+        tabs.close(id)[..],
+        [.., Action::AskSaveBeforeClose(_)]
+    ));
     assert_eq!(
         tabs.close_reply(id, CloseReply::Save),
         [Action::Flash(StatusNote::InvalidBytes)]
@@ -1341,7 +1364,11 @@ fn save_as_utf8_instead_switches_the_encoding_even_of_a_read_only_tab() {
     let id = added(&tabs.open(&[path(r"C:\odd.txt")]));
     tabs.loaded(
         id,
-        LoadedFile { encoding: Encoding::Other(encoding_rs::SHIFT_JIS), lossy: true, ..file(10) },
+        LoadedFile {
+            encoding: Encoding::Other(encoding_rs::SHIFT_JIS),
+            lossy: true,
+            ..file(10)
+        },
     );
     assert_eq!(tabs.use_utf8_instead(id), [Action::Changed(id)]);
     let tab = tabs.get(id).unwrap();
@@ -1356,9 +1383,18 @@ fn reopening_a_lossy_tab_in_an_encoding_that_fits_makes_it_editable() {
     let id = open_lossy(&mut tabs, r"C:\odd.txt");
     assert!(matches!(
         tabs.reopen_with_encoding(id, Encoding::Windows1252)[..],
-        [Action::Load { encoding: Some(Encoding::Windows1252), .. }]
+        [Action::Load {
+            encoding: Some(Encoding::Windows1252),
+            ..
+        }]
     ));
-    tabs.loaded(id, LoadedFile { encoding: Encoding::Windows1252, ..file(10) });
+    tabs.loaded(
+        id,
+        LoadedFile {
+            encoding: Encoding::Windows1252,
+            ..file(10)
+        },
+    );
     let tab = tabs.get(id).unwrap();
     assert!(!tab.read_only());
     assert_eq!(tab.status_note(), None);
@@ -1733,10 +1769,19 @@ fn opening_a_path_whose_tab_is_still_loading_shows_it_once_loaded() {
 #[test]
 fn status_notes_read_as_the_spec_words_them() {
     assert_eq!(StatusNote::ReadOnly.text(), "Read-only");
-    assert_eq!(StatusNote::StylingOff.text(), "Markdown styling off (over 1 MB)");
-    assert_eq!(StatusNote::RenderedView.text(), "Rendered view \u{b7} Esc to edit");
+    assert_eq!(
+        StatusNote::StylingOff.text(),
+        "Markdown styling off (over 1 MB)"
+    );
+    assert_eq!(
+        StatusNote::RenderedView.text(),
+        "Rendered view \u{b7} Esc to edit"
+    );
     assert_eq!(StatusNote::TooLargeToRender.text(), "Too large to render");
-    assert_eq!(StatusNote::SavedInPlace.text(), "Saved in place: the safe replace failed");
+    assert_eq!(
+        StatusNote::SavedInPlace.text(),
+        "Saved in place: the safe replace failed"
+    );
     assert_eq!(
         StatusNote::InvalidBytes.text(),
         "Read-only: some bytes don\u{2019}t fit this encoding \u{b7} Encoding \u{203a} Reopen with encoding\u{2026}"
@@ -1748,8 +1793,14 @@ fn a_file_missing_only_briefly_keeps_its_identity() {
     let mut tabs = Tabs::new();
     open_with_id(&mut tabs, r"C:\real\a.md", id_of(5), false);
     tabs.disk_event(&path(r"C:\real\a.md"), None, t0());
-    tabs.disk_event(&path(r"C:\real\a.md"), as_loaded(), t0() + MISSING_GRACE / 2);
-    assert!(!loads(&tabs.open_with_ids(&[(path(r"C:\alias\a.md"), id_of(5))])));
+    tabs.disk_event(
+        &path(r"C:\real\a.md"),
+        as_loaded(),
+        t0() + MISSING_GRACE / 2,
+    );
+    assert!(!loads(
+        &tabs.open_with_ids(&[(path(r"C:\alias\a.md"), id_of(5))])
+    ));
 }
 
 #[test]
@@ -1758,5 +1809,7 @@ fn a_file_deleted_on_disk_forgets_its_identity_so_a_reused_index_is_no_alias() {
     let mut tabs = Tabs::new();
     open_with_id(&mut tabs, r"C:\real\a.md", id_of(5), false);
     delete_on_disk(&mut tabs, r"C:\real\a.md");
-    assert!(loads(&tabs.open_with_ids(&[(path(r"C:\new\b.md"), id_of(5))])));
+    assert!(loads(
+        &tabs.open_with_ids(&[(path(r"C:\new\b.md"), id_of(5))])
+    ));
 }

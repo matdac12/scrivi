@@ -11,8 +11,8 @@ use windows::Win32::Foundation::{LRESULT, RECT, WPARAM};
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetFocus, SetFocus};
 use windows::Win32::UI::Shell::ShellExecuteW;
 use windows::Win32::UI::WindowsAndMessaging::{
-    CopyAcceleratorTableW, DestroyAcceleratorTable, GetForegroundWindow, IsWindowVisible, ShowWindow, ACCEL,
-    SW_HIDE, SW_SHOW, SW_SHOWNORMAL,
+    CopyAcceleratorTableW, DestroyAcceleratorTable, GetForegroundWindow, IsWindowVisible,
+    ShowWindow, ACCEL, SW_HIDE, SW_SHOW, SW_SHOWNORMAL,
 };
 
 use super::{accelerators, apply_settings, cmd, command, message, perform, wide, App};
@@ -35,7 +35,12 @@ pub(super) fn behind_page() -> bool {
 }
 
 pub(super) fn rect_of(r: Rect) -> RECT {
-    RECT { left: r.left, top: r.top, right: r.right, bottom: r.bottom }
+    RECT {
+        left: r.left,
+        top: r.top,
+        right: r.right,
+        bottom: r.bottom,
+    }
 }
 
 /// Show the active Tab's page if it is in the Rendered view; otherwise hide
@@ -45,7 +50,11 @@ pub(super) fn sync_rendered(a: &App) {
         let tabs = a.tabs.borrow();
         let tab = tabs.active().and_then(|id| tabs.get(id));
         let rendered = tab.filter(|t| t.view() == View::Rendered).map(Tab::id);
-        (rendered, tabs.any_rendered(), tab.and_then(|t| t.path().map(Path::to_path_buf)))
+        (
+            rendered,
+            tabs.any_rendered(),
+            tab.and_then(|t| t.path().map(Path::to_path_buf)),
+        )
     };
     if rendered.is_some() {
         // No text to search in the page: the find bar goes.
@@ -176,7 +185,14 @@ pub(super) unsafe fn on_rendered(a: &App, msg: u32, wp: WPARAM) -> LRESULT {
                     // Checked again here: only web and mail links leave scrivi.
                     if rendered::opens_outside(&uri) {
                         let uri = wide(&uri);
-                        ShellExecuteW(Some(a.hwnd), w!("open"), PCWSTR(uri.as_ptr()), None, None, SW_SHOWNORMAL);
+                        ShellExecuteW(
+                            Some(a.hwnd),
+                            w!("open"),
+                            PCWSTR(uri.as_ptr()),
+                            None,
+                            None,
+                            SW_SHOWNORMAL,
+                        );
                     }
                 }
             }
@@ -186,7 +202,10 @@ pub(super) unsafe fn on_rendered(a: &App, msg: u32, wp: WPARAM) -> LRESULT {
                 let failed_start = wp.0 == webview::FAILED_TO_START;
                 command(a, |t| {
                     let ids: Vec<TabId> = if failed_start {
-                        t.iter().filter(|x| x.view() == View::Rendered).map(Tab::id).collect()
+                        t.iter()
+                            .filter(|x| x.view() == View::Rendered)
+                            .map(Tab::id)
+                            .collect()
                     } else {
                         t.active().into_iter().collect()
                     };

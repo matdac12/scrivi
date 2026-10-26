@@ -33,7 +33,9 @@ pub fn toggle_wrap(a: &App) {
 /// The shown Tab allows word wrap.
 pub fn wrap_allowed(a: &App) -> bool {
     let tabs = a.tabs.borrow();
-    tabs.active().and_then(|id| tabs.get(id)).is_none_or(|t| t.wrap_allowed())
+    tabs.active()
+        .and_then(|id| tabs.get(id))
+        .is_none_or(|t| t.wrap_allowed())
 }
 
 fn reapply_wrap(a: &App) {

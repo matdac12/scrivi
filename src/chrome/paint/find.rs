@@ -43,7 +43,12 @@ impl Pass<'_> {
         shape.right -= h;
         shape.bottom -= h;
         unsafe {
-            self.rt.DrawRoundedRectangle(&rounded(shape, radius * self.scale - h), &self.brush(c, 1.0)?, width, None)
+            self.rt.DrawRoundedRectangle(
+                &rounded(shape, radius * self.scale - h),
+                &self.brush(c, 1.0)?,
+                width,
+                None,
+            )
         };
         Ok(())
     }
@@ -75,7 +80,16 @@ impl Pass<'_> {
         if hot {
             self.fill_rounded(r, TOGGLE_RADIUS, 0x000000, super::HOVER_A)?;
         }
-        self.text(glyph, if small { &self.fonts.tab_glyph } else { &self.fonts.plus }, r, ink)
+        self.text(
+            glyph,
+            if small {
+                &self.fonts.tab_glyph
+            } else {
+                &self.fonts.plus
+            },
+            r,
+            ink,
+        )
     }
 }
 
@@ -85,11 +99,25 @@ pub(super) fn draw(p: &Pass, f: &FindView) -> Result<()> {
         return Ok(());
     }
     let hair = p.px(1.0).max(1);
-    p.fill(Rect { top: l.band.bottom - hair, ..l.band }, colour::HAIRLINE, 1.0)?;
+    p.fill(
+        Rect {
+            top: l.band.bottom - hair,
+            ..l.band
+        },
+        colour::HAIRLINE,
+        1.0,
+    )?;
     let hot = |hit: FindHit| f.hover == Some(hit);
     let focused = |field: Field| f.focus == Some(field);
 
-    p.field_frame(l.field, focused(if l.mode == Mode::Goto { Field::Goto } else { Field::Find }))?;
+    p.field_frame(
+        l.field,
+        focused(if l.mode == Mode::Goto {
+            Field::Goto
+        } else {
+            Field::Find
+        }),
+    )?;
     p.glyph_button(l.close, GLYPH_CLOSE, true, CLOSE_INK, hot(FindHit::Close))?;
     if l.mode == Mode::Goto {
         return p.text("Go to line", &p.fonts.status, l.label, colour::MENU_TEXT);
@@ -102,7 +130,12 @@ pub(super) fn draw(p: &Pass, f: &FindView) -> Result<()> {
     } else if hot(FindHit::MatchCase) {
         p.fill_rounded(l.match_case, TOGGLE_RADIUS, 0x000000, super::HOVER_A)?;
     }
-    p.text("Aa", &p.fonts.mono, l.match_case, if f.match_case { INK } else { TOGGLE_OFF_INK })?;
+    p.text(
+        "Aa",
+        &p.fonts.mono,
+        l.match_case,
+        if f.match_case { INK } else { TOGGLE_OFF_INK },
+    )?;
 
     p.text(&f.count, &p.fonts.status, l.count, COUNT_INK)?;
     p.glyph_button(l.prev, GLYPH_UP, false, GLYPH_INK, hot(FindHit::Prev))?;

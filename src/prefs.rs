@@ -41,7 +41,13 @@ pub struct Prefs {
 
 impl Default for Prefs {
     fn default() -> Self {
-        Prefs { wrap: true, zoom: 0, window: None, maximized: false, recent: Vec::new() }
+        Prefs {
+            wrap: true,
+            zoom: 0,
+            window: None,
+            maximized: false,
+            recent: Vec::new(),
+        }
     }
 }
 
@@ -60,7 +66,9 @@ pub fn parse(text: &str) -> Prefs {
             section = name.trim().to_ascii_lowercase();
             continue;
         }
-        let Some((key, value)) = line.split_once('=') else { continue };
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
         let (key, value) = (key.trim().to_ascii_lowercase(), value.trim());
         match (section.as_str(), key.as_str()) {
             ("view", "wrap") => prefs.wrap = parse_bool(value).unwrap_or(prefs.wrap),
@@ -105,7 +113,11 @@ fn parse_bool(s: &str) -> Option<bool> {
 /// The `.ini` text for `prefs`.
 pub fn serialise(prefs: &Prefs) -> String {
     let mut out = String::from("[view]\n");
-    out += &format!("wrap={}\nzoom={}\n", prefs.wrap as u8, prefs.zoom.clamp(ZOOM_MIN, ZOOM_MAX));
+    out += &format!(
+        "wrap={}\nzoom={}\n",
+        prefs.wrap as u8,
+        prefs.zoom.clamp(ZOOM_MIN, ZOOM_MAX)
+    );
     out += "\n[window]\n";
     if let Some(p) = prefs.window {
         out += &format!("x={}\ny={}\nw={}\nh={}\n", p.x, p.y, p.w, p.h);
@@ -152,7 +164,9 @@ pub fn menu_label(index: usize, path: &Path) -> String {
     let chars: Vec<char> = text.chars().collect();
     let shown: String = if chars.len() > MAX_CHARS {
         let head: String = chars[..MAX_CHARS / 3].iter().collect();
-        let tail: String = chars[chars.len() - (MAX_CHARS - MAX_CHARS / 3 - 1)..].iter().collect();
+        let tail: String = chars[chars.len() - (MAX_CHARS - MAX_CHARS / 3 - 1)..]
+            .iter()
+            .collect();
         format!("{head}\u{2026}{tail}")
     } else {
         text
@@ -179,7 +193,10 @@ pub fn clamp_to_work_areas(want: Placement, work_areas: &[Placement]) -> Option<
             0
         }
     };
-    let best = work_areas.iter().filter(|a| overlap(a) > 0).max_by_key(|a| overlap(a))?;
+    let best = work_areas
+        .iter()
+        .filter(|a| overlap(a) > 0)
+        .max_by_key(|a| overlap(a))?;
     let w = want.w.min(best.w);
     let h = want.h.min(best.h);
     let x = want.x.clamp(best.x, best.x + best.w - w);
@@ -221,22 +238,29 @@ fn dir_for(
             return None;
         }
     }
-    local_app_data.filter(|d| !d.is_empty()).map(|d| PathBuf::from(d).join("scrivi"))
+    local_app_data
+        .filter(|d| !d.is_empty())
+        .map(|d| PathBuf::from(d).join("scrivi"))
 }
 
 /// True when this is a test or debug run with its own prefs (or none): the
 /// shell's Recent list and jump list must stay untouched then.
 pub fn sandboxed() -> bool {
     cfg!(debug_assertions)
-        && (std::env::var_os("SCRIVI_TEST_PREFS_DIR").is_some() || std::env::var_os("SCRIVI_TEST_INSTANCE").is_some())
+        && (std::env::var_os("SCRIVI_TEST_PREFS_DIR").is_some()
+            || std::env::var_os("SCRIVI_TEST_INSTANCE").is_some())
 }
 
 const FILE: &str = "scrivi.ini";
 
 /// The stored prefs; the defaults if there are none or the file is unreadable.
 pub fn load() -> Prefs {
-    let Some(dir) = dir() else { return Prefs::default() };
-    std::fs::read(dir.join(FILE)).map(|b| parse(&String::from_utf8_lossy(&b))).unwrap_or_default()
+    let Some(dir) = dir() else {
+        return Prefs::default();
+    };
+    std::fs::read(dir.join(FILE))
+        .map(|b| parse(&String::from_utf8_lossy(&b)))
+        .unwrap_or_default()
 }
 
 /// Write `prefs` (the temp file, then a rename, so a crash never leaves half
@@ -247,7 +271,9 @@ pub fn save(prefs: &Prefs) {
         return;
     }
     let tmp = dir.join("scrivi.ini.tmp");
-    if std::fs::write(&tmp, serialise(prefs)).is_ok() && std::fs::rename(&tmp, dir.join(FILE)).is_err() {
+    if std::fs::write(&tmp, serialise(prefs)).is_ok()
+        && std::fs::rename(&tmp, dir.join(FILE)).is_err()
+    {
         let _ = std::fs::remove_file(&tmp);
     }
 }

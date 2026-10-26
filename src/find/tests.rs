@@ -9,20 +9,37 @@ struct Doc {
 }
 
 fn doc(s: &str) -> Doc {
-    Doc { text: s.into(), steps: 0, open: false }
+    Doc {
+        text: s.into(),
+        steps: 0,
+        open: false,
+    }
 }
 
 impl Text for Doc {
     fn find(&self, needle: &str, from: usize, to: usize, match_case: bool) -> Option<Range<usize>> {
-        let fold = |s: &str| if match_case { s.to_string() } else { s.to_ascii_lowercase() };
+        let fold = |s: &str| {
+            if match_case {
+                s.to_string()
+            } else {
+                s.to_ascii_lowercase()
+            }
+        };
         let (hay, needle) = (fold(&self.text), fold(needle));
         let fits = |at: usize| hay.is_char_boundary(at) && hay[at..].starts_with(&needle);
         let hit = |at: usize| Some(at..at + needle.len());
         if from <= to {
-            (from..=to.saturating_sub(needle.len())).filter(|_| to >= needle.len()).find(|at| fits(*at)).and_then(hit)
+            (from..=to.saturating_sub(needle.len()))
+                .filter(|_| to >= needle.len())
+                .find(|at| fits(*at))
+                .and_then(hit)
         } else {
             // Backwards: matches that end at or before `from`, down to `to`.
-            (to..=from.saturating_sub(needle.len())).rev().filter(|_| from >= needle.len()).find(|at| fits(*at)).and_then(hit)
+            (to..=from.saturating_sub(needle.len()))
+                .rev()
+                .filter(|_| from >= needle.len())
+                .find(|at| fits(*at))
+                .and_then(hit)
         }
     }
 
@@ -230,6 +247,9 @@ fn the_count_reads_n_of_m() {
     assert_eq!(count_label(false, None, &three), "3 found");
     assert_eq!(count_label(false, None, &Matches::default()), "No results");
     assert_eq!(count_label(true, None, &Matches::default()), "");
-    let capped = Matches { list: vec![0..1; MATCH_CAP], capped: true };
+    let capped = Matches {
+        list: vec![0..1; MATCH_CAP],
+        capped: true,
+    };
     assert_eq!(count_label(false, Some(4), &capped), "5 of 10000+");
 }

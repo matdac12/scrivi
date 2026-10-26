@@ -23,13 +23,20 @@ pub fn watcher(hwnd: HWND) -> Watcher {
     let hwnd = hwnd.0 as isize;
     Watcher::new(move |path, change| {
         let first = {
-            let Ok(mut events) = EVENTS.lock() else { return };
+            let Ok(mut events) = EVENTS.lock() else {
+                return;
+            };
             events.push((path, change));
             events.len() == 1
         };
         if first {
             unsafe {
-                let _ = PostMessageW(Some(HWND(hwnd as *mut _)), WM_DISK_EVENT, WPARAM(0), LPARAM(0));
+                let _ = PostMessageW(
+                    Some(HWND(hwnd as *mut _)),
+                    WM_DISK_EVENT,
+                    WPARAM(0),
+                    LPARAM(0),
+                );
             }
         }
     })
@@ -47,7 +54,10 @@ pub fn unwatch(a: &App, path: &Path) {
 /// trusted (a rename pair or a replace burst says little): the file as it is
 /// now decides.
 pub fn events(a: &App) {
-    let events = EVENTS.lock().map(|mut e| std::mem::take(&mut *e)).unwrap_or_default();
+    let events = EVENTS
+        .lock()
+        .map(|mut e| std::mem::take(&mut *e))
+        .unwrap_or_default();
     for (path, _) in events {
         let on_disk = stat_of(&path);
         command(a, |t| t.disk_event(&path, on_disk, Instant::now()));

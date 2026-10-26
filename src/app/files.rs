@@ -13,19 +13,19 @@ use windows::core::{w, HSTRING, PCWSTR, PWSTR};
 use windows::Win32::Foundation::{LPARAM, WPARAM};
 use windows::Win32::Globalization::GetACP;
 use windows::Win32::System::Com::{
-    CoCreateInstance, CoInitializeEx, CoTaskMemFree, CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED,
-    COINIT_DISABLE_OLE1DDE,
+    CoCreateInstance, CoInitializeEx, CoTaskMemFree, CLSCTX_INPROC_SERVER,
+    COINIT_APARTMENTTHREADED, COINIT_DISABLE_OLE1DDE,
 };
 use windows::Win32::UI::Controls::{
-    TaskDialogIndirect, TASKDIALOGCONFIG, TASKDIALOG_BUTTON, TDCBF_CANCEL_BUTTON, TDF_ALLOW_DIALOG_CANCELLATION,
-    TDF_POSITION_RELATIVE_TO_WINDOW,
+    TaskDialogIndirect, TASKDIALOGCONFIG, TASKDIALOG_BUTTON, TDCBF_CANCEL_BUTTON,
+    TDF_ALLOW_DIALOG_CANCELLATION, TDF_POSITION_RELATIVE_TO_WINDOW,
 };
 use windows::Win32::UI::Shell::Common::COMDLG_FILTERSPEC;
 use windows::Win32::UI::Shell::{
-    DragFinish, DragQueryFileW, FileOpenDialog, FileSaveDialog, IFileDialog, IFileOpenDialog, IFileSaveDialog,
-    IShellItem, SHCreateItemFromParsingName, SHGetKnownFolderItem, FOLDERID_Documents, FOS_ALLOWMULTISELECT,
-    FOS_FILEMUSTEXIST, FOS_FORCEFILESYSTEM, FOS_OVERWRITEPROMPT, FOS_PATHMUSTEXIST, HDROP, KF_FLAG_DEFAULT,
-    SIGDN_FILESYSPATH,
+    DragFinish, DragQueryFileW, FOLDERID_Documents, FileOpenDialog, FileSaveDialog, IFileDialog,
+    IFileOpenDialog, IFileSaveDialog, IShellItem, SHCreateItemFromParsingName,
+    SHGetKnownFolderItem, FOS_ALLOWMULTISELECT, FOS_FILEMUSTEXIST, FOS_FORCEFILESYSTEM,
+    FOS_OVERWRITEPROMPT, FOS_PATHMUSTEXIST, HDROP, KF_FLAG_DEFAULT, SIGDN_FILESYSPATH,
 };
 use windows::Win32::UI::WindowsAndMessaging::SendMessageW;
 
@@ -97,13 +97,25 @@ fn pick_files(a: &App) -> Option<Vec<PathBuf>> {
     com();
     let folder = active_folder(a);
     unsafe {
-        let dialog: IFileOpenDialog = CoCreateInstance(&FileOpenDialog, None, CLSCTX_INPROC_SERVER).ok()?;
+        let dialog: IFileOpenDialog =
+            CoCreateInstance(&FileOpenDialog, None, CLSCTX_INPROC_SERVER).ok()?;
         let options = dialog.GetOptions().ok()?;
-        dialog.SetOptions(options | FOS_ALLOWMULTISELECT | FOS_FILEMUSTEXIST | FOS_FORCEFILESYSTEM).ok()?;
+        dialog
+            .SetOptions(options | FOS_ALLOWMULTISELECT | FOS_FILEMUSTEXIST | FOS_FORCEFILESYSTEM)
+            .ok()?;
         let types = [
-            COMDLG_FILTERSPEC { pszName: w!("All files (*.*)"), pszSpec: w!("*.*") },
-            COMDLG_FILTERSPEC { pszName: w!("Markdown (*.md)"), pszSpec: w!("*.md;*.markdown") },
-            COMDLG_FILTERSPEC { pszName: w!("Text (*.txt)"), pszSpec: w!("*.txt") },
+            COMDLG_FILTERSPEC {
+                pszName: w!("All files (*.*)"),
+                pszSpec: w!("*.*"),
+            },
+            COMDLG_FILTERSPEC {
+                pszName: w!("Markdown (*.md)"),
+                pszSpec: w!("*.md;*.markdown"),
+            },
+            COMDLG_FILTERSPEC {
+                pszName: w!("Text (*.txt)"),
+                pszSpec: w!("*.txt"),
+            },
         ];
         dialog.SetFileTypes(&types).ok()?;
         if let Some(item) = folder.as_deref().and_then(shell_item) {
@@ -113,7 +125,12 @@ fn pick_files(a: &App) -> Option<Vec<PathBuf>> {
         dialog.Show(Some(a.hwnd)).ok()?;
         let results = dialog.GetResults().ok()?;
         let count = results.GetCount().ok()?;
-        Some((0..count).filter_map(|i| results.GetItemAt(i).ok()).filter_map(|item| path_of(&item)).collect())
+        Some(
+            (0..count)
+                .filter_map(|i| results.GetItemAt(i).ok())
+                .filter_map(|item| path_of(&item))
+                .collect(),
+        )
     }
 }
 
@@ -138,7 +155,9 @@ const SAVE_TYPES: [(PCWSTR, PCWSTR); 3] = [
 /// The 1-based filter for a file name, and the extension a typed name
 /// without one gets.
 fn save_type(file_name: &str) -> (u32, String) {
-    let ext = Path::new(file_name).extension().map(|e| e.to_string_lossy().to_lowercase());
+    let ext = Path::new(file_name)
+        .extension()
+        .map(|e| e.to_string_lossy().to_lowercase());
     match ext.as_deref() {
         None => (1, "md".into()),
         Some("md" | "markdown") => (1, ext.unwrap_or_default()),
@@ -153,17 +172,25 @@ fn pick_save_path(a: &App, default: &SaveAsDefault) -> Option<PathBuf> {
     }
     com();
     unsafe {
-        let dialog: IFileSaveDialog = CoCreateInstance(&FileSaveDialog, None, CLSCTX_INPROC_SERVER).ok()?;
+        let dialog: IFileSaveDialog =
+            CoCreateInstance(&FileSaveDialog, None, CLSCTX_INPROC_SERVER).ok()?;
         let options = dialog.GetOptions().ok()?;
-        dialog.SetOptions(options | FOS_OVERWRITEPROMPT | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST).ok()?;
-        let types = SAVE_TYPES.map(|(name, spec)| COMDLG_FILTERSPEC { pszName: name, pszSpec: spec });
+        dialog
+            .SetOptions(options | FOS_OVERWRITEPROMPT | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST)
+            .ok()?;
+        let types = SAVE_TYPES.map(|(name, spec)| COMDLG_FILTERSPEC {
+            pszName: name,
+            pszSpec: spec,
+        });
         dialog.SetFileTypes(&types).ok()?;
         let (index, ext) = save_type(&default.file_name);
         let _ = dialog.SetFileTypeIndex(index);
         let _ = dialog.SetDefaultExtension(&HSTRING::from(ext));
         let _ = dialog.SetFileName(&HSTRING::from(default.file_name.as_str()));
         let folder: Option<IShellItem> = match &default.folder {
-            SaveAsFolder::Documents => SHGetKnownFolderItem(&FOLDERID_Documents, KF_FLAG_DEFAULT, None).ok(),
+            SaveAsFolder::Documents => {
+                SHGetKnownFolderItem(&FOLDERID_Documents, KF_FLAG_DEFAULT, None).ok()
+            }
             SaveAsFolder::Folder(folder) => shell_item(folder),
         };
         if let Some(folder) = folder {
@@ -202,7 +229,10 @@ pub fn write(a: &App, id: TabId, path: &Path, encoding: Encoding, eol: Eol) {
         Ok(bytes) => bytes,
         Err(bad) => {
             drop(text);
-            let name = path.file_name().map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into());
+            let name = path.file_name().map_or_else(
+                || path.display().to_string(),
+                |n| n.to_string_lossy().into(),
+            );
             let chars: String = bad.chars.iter().take(12).flat_map(|c| [*c, ' ']).collect();
             let more = if bad.chars.len() > 12 { "\u{2026}" } else { "" };
             let utf8 = confirm(
@@ -226,14 +256,18 @@ pub fn write(a: &App, id: TabId, path: &Path, encoding: Encoding, eol: Eol) {
     drop(text);
     match atomic::write(path, &bytes) {
         Ok(written) => {
-            let stat = super::stat_of(path)
-                .unwrap_or(FileStat { size: bytes.len() as u64, modified: SystemTime::now() });
+            let stat = super::stat_of(path).unwrap_or(FileStat {
+                size: bytes.len() as u64,
+                modified: SystemTime::now(),
+            });
             // Before `saved`: a close waiting on this save releases the document.
             in_document(a, id, |e| {
                 send(e, sci::SCI_SETSAVEPOINT);
             });
             let file_id = file_id(path);
-            command(a, |t| t.saved_with_id(id, path.to_path_buf(), stat, file_id, Instant::now()));
+            command(a, |t| {
+                t.saved_with_id(id, path.to_path_buf(), stat, file_id, Instant::now())
+            });
             if written == atomic::Written::InPlace {
                 command(a, |_| vec![Action::Flash(StatusNote::SavedInPlace)]);
             }
@@ -241,7 +275,10 @@ pub fn write(a: &App, id: TabId, path: &Path, encoding: Encoding, eol: Eol) {
         Err(e) => {
             // The outcome goes in before the message box pumps messages.
             command(a, |t| t.save_failed(id));
-            message(a, &format!("Couldn\u{2019}t save {}.\n\n{e}", path.display()));
+            message(
+                a,
+                &format!("Couldn\u{2019}t save {}.\n\n{e}", path.display()),
+            );
         }
     }
 }
@@ -254,7 +291,10 @@ fn confirm(a: &App, instruction: &str, content: &str, yes: &str) -> bool {
         return false;
     }
     let (instruction, content, yes) = (wide(instruction), wide(content), wide(yes));
-    let buttons = [TASKDIALOG_BUTTON { nButtonID: YES, pszButtonText: PCWSTR(yes.as_ptr()) }];
+    let buttons = [TASKDIALOG_BUTTON {
+        nButtonID: YES,
+        pszButtonText: PCWSTR(yes.as_ptr()),
+    }];
     let config = TASKDIALOGCONFIG {
         cbSize: std::mem::size_of::<TASKDIALOGCONFIG>() as u32,
         hwndParent: a.hwnd,
@@ -292,7 +332,10 @@ fn reopen_choices(current: Encoding) -> Vec<Encoding> {
 pub fn reopen(a: &App) {
     let Some((id, name, current)) = ({
         let tabs = a.tabs.borrow();
-        tabs.active().and_then(|id| tabs.get(id)).filter(|t| !t.is_untitled()).map(|t| (t.id(), t.name(), t.encoding()))
+        tabs.active()
+            .and_then(|id| tabs.get(id))
+            .filter(|t| !t.is_untitled())
+            .map(|t| (t.id(), t.name(), t.encoding()))
     }) else {
         return;
     };
@@ -313,12 +356,18 @@ fn pick_encoding(a: &App, name: &str, current: Encoding) -> Option<Encoding> {
     let radios: Vec<TASKDIALOG_BUTTON> = labels
         .iter()
         .enumerate()
-        .map(|(i, l)| TASKDIALOG_BUTTON { nButtonID: FIRST + i as i32, pszButtonText: PCWSTR(l.as_ptr()) })
+        .map(|(i, l)| TASKDIALOG_BUTTON {
+            nButtonID: FIRST + i as i32,
+            pszButtonText: PCWSTR(l.as_ptr()),
+        })
         .collect();
     let instruction = wide(&format!("Reopen {name} with encoding"));
     let content = wide("Reads the file again from disk in the encoding you pick.");
     let reopen = wide("Reopen");
-    let buttons = [TASKDIALOG_BUTTON { nButtonID: REOPEN, pszButtonText: PCWSTR(reopen.as_ptr()) }];
+    let buttons = [TASKDIALOG_BUTTON {
+        nButtonID: REOPEN,
+        pszButtonText: PCWSTR(reopen.as_ptr()),
+    }];
     let at = choices.iter().position(|e| *e == current).unwrap_or(0);
     let config = TASKDIALOGCONFIG {
         cbSize: std::mem::size_of::<TASKDIALOGCONFIG>() as u32,
@@ -338,12 +387,16 @@ fn pick_encoding(a: &App, name: &str, current: Encoding) -> Option<Encoding> {
     };
     let (mut pressed, mut radio) = (0, 0);
     unsafe { TaskDialogIndirect(&config, Some(&mut pressed), Some(&mut radio), None) }.ok()?;
-    (pressed == REOPEN).then(|| choices.get((radio - FIRST) as usize).copied()).flatten()
+    (pressed == REOPEN)
+        .then(|| choices.get((radio - FIRST) as usize).copied())
+        .flatten()
 }
 
 /// `Action::AskDiscardForReopen`.
 pub fn ask_discard_for_reopen(a: &App, id: TabId, encoding: Encoding) {
-    let Some(name) = a.tabs.borrow().get(id).map(Tab::name) else { return };
+    let Some(name) = a.tabs.borrow().get(id).map(Tab::name) else {
+        return;
+    };
     let yes = confirm(
         a,
         &format!("Discard your unsaved edits to {name}?"),
@@ -379,7 +432,13 @@ pub fn dropped(a: &App, drop: HDROP) {
 /// `SCN_SAVEPOINTLEFT` / `SCN_SAVEPOINTREACHED` from the shown document.
 pub fn save_point(a: &App, left: bool) {
     if let Some(id) = a.shown.get() {
-        command(a, |t| if left { t.save_point_left(id) } else { t.save_point_reached(id) });
+        command(a, |t| {
+            if left {
+                t.save_point_left(id)
+            } else {
+                t.save_point_reached(id)
+            }
+        });
     }
 }
 

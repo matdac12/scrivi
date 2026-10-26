@@ -23,7 +23,13 @@ fn instance() -> String {
 const EXE: &str = env!("CARGO_BIN_EXE_scrivi");
 
 fn resident_up() -> bool {
-    unsafe { FindWindowW(&HSTRING::from(format!("Scrivi.Window.{}", instance())), PCWSTR::null()) }.is_ok()
+    unsafe {
+        FindWindowW(
+            &HSTRING::from(format!("Scrivi.Window.{}", instance())),
+            PCWSTR::null(),
+        )
+    }
+    .is_ok()
 }
 
 fn wait_until(what: &str, mut f: impl FnMut() -> bool) {
@@ -55,7 +61,11 @@ impl Run {
 
     /// The strip as the resident last wrote it.
     fn strip(&self) -> Vec<String> {
-        std::fs::read_to_string(self.dir.join("tabs.txt")).unwrap_or_default().lines().map(String::from).collect()
+        std::fs::read_to_string(self.dir.join("tabs.txt"))
+            .unwrap_or_default()
+            .lines()
+            .map(String::from)
+            .collect()
     }
 
     /// A later launch: it hands over and exits 0, and the strip becomes `want`.
@@ -96,7 +106,10 @@ fn launches_open_tabs_in_the_one_window() {
 
     // Opening five files from Explorer gives five Tabs; the newest is shown.
     for (i, f) in files.iter().enumerate().skip(1) {
-        let mut want: Vec<String> = files[..=i].iter().map(|f| f.file_name().unwrap().to_string_lossy().into()).collect();
+        let mut want: Vec<String> = files[..=i]
+            .iter()
+            .map(|f| f.file_name().unwrap().to_string_lossy().into())
+            .collect();
         want[i] = format!("*{}", want[i]);
         let want: Vec<&str> = want.iter().map(String::as_str).collect();
         run.hand_off(&[f], &want);
@@ -106,12 +119,21 @@ fn launches_open_tabs_in_the_one_window() {
     run.hand_off(&[&files[2]], &["a.md", "b.txt", "*c.md", "d.log", "e.md"]);
 
     // No arguments: a new Untitled tab.
-    run.hand_off(&[], &["a.md", "b.txt", "c.md", "d.log", "e.md", "*Untitled 1"]);
+    run.hand_off(
+        &[],
+        &["a.md", "b.txt", "c.md", "d.log", "e.md", "*Untitled 1"],
+    );
 
     // A file that can't be read gets no Tab; the shown one stays.
     // (Hand-offs are handled in order, so the next one shows it left nothing behind.)
-    run.hand_off(&[&dir.join("missing.md")], &["a.md", "b.txt", "c.md", "d.log", "e.md", "*Untitled 1"]);
-    run.hand_off(&[&files[0]], &["*a.md", "b.txt", "c.md", "d.log", "e.md", "Untitled 1"]);
+    run.hand_off(
+        &[&dir.join("missing.md")],
+        &["a.md", "b.txt", "c.md", "d.log", "e.md", "*Untitled 1"],
+    );
+    run.hand_off(
+        &[&files[0]],
+        &["*a.md", "b.txt", "c.md", "d.log", "e.md", "Untitled 1"],
+    );
 
     drop(resident);
     wait_until("the window to go away", || !resident_up());

@@ -22,8 +22,21 @@ const REGISTERED_APPS: &str = r"Software\RegisteredApplications";
 
 /// Extensions scrivi registers for (§12). `.` is the extensionless pseudo-type.
 pub const EXTENSIONS: &[&str] = &[
-    ".txt", ".md", ".markdown", ".log", ".ini", ".json", ".csv", ".env", ".cfg", ".conf", ".yaml",
-    ".yml", ".toml", ".xml", ".",
+    ".txt",
+    ".md",
+    ".markdown",
+    ".log",
+    ".ini",
+    ".json",
+    ".csv",
+    ".env",
+    ".cfg",
+    ".conf",
+    ".yaml",
+    ".yml",
+    ".toml",
+    ".xml",
+    ".",
 ];
 
 /// One registry value: (key below HKCU, value name or "" for the default, string data).
@@ -35,11 +48,27 @@ pub fn registry_plan(exe: &Path) -> Vec<PlanEntry> {
     let prog = format!(r"Software\Classes\{PROG_ID}");
     let mut plan: Vec<PlanEntry> = vec![
         (prog.clone(), "".into(), "Text file (scrivi)".into()),
-        (format!(r"{prog}\DefaultIcon"), "".into(), format!("\"{exe}\",0")),
-        (format!(r"{prog}\shell\open\command"), "".into(), format!("\"{exe}\" \"%1\"")),
+        (
+            format!(r"{prog}\DefaultIcon"),
+            "".into(),
+            format!("\"{exe}\",0"),
+        ),
+        (
+            format!(r"{prog}\shell\open\command"),
+            "".into(),
+            format!("\"{exe}\" \"%1\""),
+        ),
         // Explorer's Edit verb comes from the default ProgID's shell\edit.
-        (format!(r"{prog}\shell\edit\command"), "".into(), format!("\"{exe}\" \"%1\"")),
-        (CAPABILITIES.into(), "ApplicationName".into(), APP_NAME.into()),
+        (
+            format!(r"{prog}\shell\edit\command"),
+            "".into(),
+            format!("\"{exe}\" \"%1\""),
+        ),
+        (
+            CAPABILITIES.into(),
+            "ApplicationName".into(),
+            APP_NAME.into(),
+        ),
         (
             CAPABILITIES.into(),
             "ApplicationDescription".into(),
@@ -48,8 +77,16 @@ pub fn registry_plan(exe: &Path) -> Vec<PlanEntry> {
         (REGISTERED_APPS.into(), APP_NAME.into(), CAPABILITIES.into()),
     ];
     for ext in EXTENSIONS {
-        plan.push((format!(r"{CAPABILITIES}\FileAssociations"), (*ext).into(), PROG_ID.into()));
-        plan.push((format!(r"Software\Classes\{ext}\OpenWithProgids"), PROG_ID.into(), "".into()));
+        plan.push((
+            format!(r"{CAPABILITIES}\FileAssociations"),
+            (*ext).into(),
+            PROG_ID.into(),
+        ));
+        plan.push((
+            format!(r"Software\Classes\{ext}\OpenWithProgids"),
+            PROG_ID.into(),
+            "".into(),
+        ));
     }
     plan
 }
@@ -70,7 +107,11 @@ fn join(prefix: &str, key: &str) -> String {
 pub fn apply(prefix: &str, plan: &[PlanEntry]) -> Result<(), String> {
     for (key, name, data) in plan {
         let (k, n, d) = (wide(&join(prefix, key)), wide(name), wide(data));
-        let name_ptr = if name.is_empty() { PCWSTR::null() } else { PCWSTR(n.as_ptr()) };
+        let name_ptr = if name.is_empty() {
+            PCWSTR::null()
+        } else {
+            PCWSTR(n.as_ptr())
+        };
         let err = unsafe {
             RegSetKeyValueW(
                 HKEY_CURRENT_USER,
@@ -93,8 +134,13 @@ fn counts(subkey: &str) -> Option<(u32, u32)> {
     let k = wide(subkey);
     unsafe {
         let mut h = HKEY::default();
-        if RegOpenKeyExW(HKEY_CURRENT_USER, PCWSTR(k.as_ptr()), None, KEY_READ, &mut h)
-            != ERROR_SUCCESS
+        if RegOpenKeyExW(
+            HKEY_CURRENT_USER,
+            PCWSTR(k.as_ptr()),
+            None,
+            KEY_READ,
+            &mut h,
+        ) != ERROR_SUCCESS
         {
             return None;
         }
@@ -130,7 +176,11 @@ pub fn remove(prefix: &str, plan: &[PlanEntry]) -> Result<(), String> {
     let mut keys: Vec<&str> = Vec::new();
     for (key, name, _) in plan {
         let (k, n) = (wide(&join(prefix, key)), wide(name));
-        let name_ptr = if name.is_empty() { PCWSTR::null() } else { PCWSTR(n.as_ptr()) };
+        let name_ptr = if name.is_empty() {
+            PCWSTR::null()
+        } else {
+            PCWSTR(n.as_ptr())
+        };
         let err = unsafe { RegDeleteKeyValueW(HKEY_CURRENT_USER, PCWSTR(k.as_ptr()), name_ptr) };
         // A missing key reports PATH_NOT_FOUND, a missing value FILE_NOT_FOUND.
         if err != ERROR_SUCCESS && err != ERROR_FILE_NOT_FOUND && err != ERROR_PATH_NOT_FOUND {
@@ -170,7 +220,9 @@ pub fn remove(prefix: &str, plan: &[PlanEntry]) -> Result<(), String> {
 /// Release builds ignore the variable.
 #[cfg(debug_assertions)]
 fn test_prefix() -> Option<String> {
-    std::env::var("SCRIVI_TEST_REGISTRY_PREFIX").ok().filter(|p| !p.is_empty())
+    std::env::var("SCRIVI_TEST_REGISTRY_PREFIX")
+        .ok()
+        .filter(|p| !p.is_empty())
 }
 
 #[cfg(not(debug_assertions))]
@@ -244,15 +296,31 @@ mod tests {
     }
 
     fn find<'a>(plan: &'a [PlanEntry], key: &str, name: &str) -> Option<&'a str> {
-        plan.iter().find(|(k, n, _)| k == key && n == name).map(|(_, _, d)| d.as_str())
+        plan.iter()
+            .find(|(k, n, _)| k == key && n == name)
+            .map(|(_, _, d)| d.as_str())
     }
 
     #[test]
     fn open_and_edit_commands_quote_exe_and_argument() {
         let plan = registry_plan(&exe());
         let want = r#""C:\Apps\scrivi\scrivi.exe" "%1""#;
-        assert_eq!(find(&plan, r"Software\Classes\Scrivi.TextFile\shell\open\command", ""), Some(want));
-        assert_eq!(find(&plan, r"Software\Classes\Scrivi.TextFile\shell\edit\command", ""), Some(want));
+        assert_eq!(
+            find(
+                &plan,
+                r"Software\Classes\Scrivi.TextFile\shell\open\command",
+                ""
+            ),
+            Some(want)
+        );
+        assert_eq!(
+            find(
+                &plan,
+                r"Software\Classes\Scrivi.TextFile\shell\edit\command",
+                ""
+            ),
+            Some(want)
+        );
         assert_eq!(
             find(&plan, r"Software\Classes\Scrivi.TextFile\DefaultIcon", ""),
             Some(r#""C:\Apps\scrivi\scrivi.exe",0"#)
@@ -268,13 +336,29 @@ mod tests {
                 Some("Scrivi.TextFile")
             );
             assert_eq!(
-                find(&plan, &format!(r"Software\Classes\{ext}\OpenWithProgids"), "Scrivi.TextFile"),
+                find(
+                    &plan,
+                    &format!(r"Software\Classes\{ext}\OpenWithProgids"),
+                    "Scrivi.TextFile"
+                ),
                 Some("")
             );
         }
         for ext in [
-            ".txt", ".md", ".markdown", ".log", ".ini", ".json", ".csv", ".env", ".cfg", ".conf",
-            ".yaml", ".yml", ".toml", ".xml",
+            ".txt",
+            ".md",
+            ".markdown",
+            ".log",
+            ".ini",
+            ".json",
+            ".csv",
+            ".env",
+            ".cfg",
+            ".conf",
+            ".yaml",
+            ".yml",
+            ".toml",
+            ".xml",
         ] {
             assert!(EXTENSIONS.contains(&ext), "{ext}");
         }
@@ -287,8 +371,16 @@ mod tests {
             find(&plan, r"Software\RegisteredApplications", "Scrivi"),
             Some(r"Software\Scrivi\Capabilities")
         );
-        assert_eq!(find(&plan, r"Software\Scrivi\Capabilities", "ApplicationName"), Some("Scrivi"));
-        assert!(find(&plan, r"Software\Scrivi\Capabilities", "ApplicationDescription").is_some());
+        assert_eq!(
+            find(&plan, r"Software\Scrivi\Capabilities", "ApplicationName"),
+            Some("Scrivi")
+        );
+        assert!(find(
+            &plan,
+            r"Software\Scrivi\Capabilities",
+            "ApplicationDescription"
+        )
+        .is_some());
     }
 
     #[test]
@@ -296,7 +388,10 @@ mod tests {
         let plan = registry_plan(&exe());
         for (key, name, _) in &plan {
             assert!(key.starts_with(r"Software\"), "{key}");
-            assert!(!key.contains("UserChoice") && !key.contains("FileExts"), "{key}");
+            assert!(
+                !key.contains("UserChoice") && !key.contains("FileExts"),
+                "{key}"
+            );
             assert!(!name.to_lowercase().contains("hash"), "{name}");
             // `.ext` itself keeps its default; only OpenWithProgids is written.
             if key.starts_with(r"Software\Classes\.") {
@@ -304,7 +399,9 @@ mod tests {
             }
         }
         let mut seen = std::collections::HashSet::new();
-        assert!(plan.iter().all(|(k, n, _)| seen.insert((k.clone(), n.clone()))));
+        assert!(plan
+            .iter()
+            .all(|(k, n, _)| seen.insert((k.clone(), n.clone()))));
     }
 
     // --- registry round trips, in a throwaway HKCU subtree ---
@@ -327,7 +424,11 @@ mod tests {
 
     fn read(full_key: &str, name: &str) -> Option<String> {
         let (k, n) = (wide(full_key), wide(name));
-        let name_ptr = if name.is_empty() { PCWSTR::null() } else { PCWSTR(n.as_ptr()) };
+        let name_ptr = if name.is_empty() {
+            PCWSTR::null()
+        } else {
+            PCWSTR(n.as_ptr())
+        };
         let mut buf = [0u16; 512];
         let mut len = std::mem::size_of_val(&buf) as u32;
         let err = unsafe {
@@ -363,7 +464,10 @@ mod tests {
         applied.unwrap();
         assert!(written.iter().all(|&ok| ok), "not every value read back");
         removed.unwrap();
-        assert!(left.is_none() || left == Some((0, 0)), "left behind: {left:?}");
+        assert!(
+            left.is_none() || left == Some((0, 0)),
+            "left behind: {left:?}"
+        );
     }
 
     #[test]

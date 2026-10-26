@@ -28,7 +28,13 @@ const SAVE: usize = 105;
 const EOL_LF: usize = 130;
 
 fn resident() -> Option<HWND> {
-    unsafe { FindWindowW(&HSTRING::from(format!("Scrivi.Window.{}", instance())), PCWSTR::null()) }.ok()
+    unsafe {
+        FindWindowW(
+            &HSTRING::from(format!("Scrivi.Window.{}", instance())),
+            PCWSTR::null(),
+        )
+    }
+    .ok()
 }
 
 fn wait_until(what: &str, mut f: impl FnMut() -> bool) {
@@ -59,7 +65,11 @@ impl Run {
     }
 
     fn strip(&self) -> Vec<String> {
-        std::fs::read_to_string(self.dir.join("tabs.txt")).unwrap_or_default().lines().map(String::from).collect()
+        std::fs::read_to_string(self.dir.join("tabs.txt"))
+            .unwrap_or_default()
+            .lines()
+            .map(String::from)
+            .collect()
     }
 
     /// Hand `file` to the resident and wait until its Tab is the active one.
@@ -82,13 +92,20 @@ impl Drop for Resident {
 /// Send menu commands to the Window, then wait until `file` was written again.
 fn command_and_wait_for_save(file: &Path, commands: &[usize]) {
     let long_ago = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000_000);
-    std::fs::File::options().write(true).open(file).unwrap().set_modified(long_ago).unwrap();
+    std::fs::File::options()
+        .write(true)
+        .open(file)
+        .unwrap()
+        .set_modified(long_ago)
+        .unwrap();
     let hwnd = resident().expect("the resident");
     for id in commands {
         unsafe { PostMessageW(Some(hwnd), WM_COMMAND, WPARAM(*id), LPARAM(0)) }.unwrap();
     }
     wait_until(&format!("{} saved", file.display()), || {
-        std::fs::metadata(file).and_then(|m| m.modified()).is_ok_and(|t| t != long_ago)
+        std::fs::metadata(file)
+            .and_then(|m| m.modified())
+            .is_ok_and(|t| t != long_ago)
     });
 }
 
@@ -101,11 +118,21 @@ fn saving_writes_unedited_files_back_byte_for_byte_and_converts_line_endings() {
     let run = Run { dir: dir.clone() };
 
     let mut utf16 = vec![0xFF, 0xFE];
-    utf16.extend("Perché è già così\r\n😀 fine\r\n".encode_utf16().flat_map(u16::to_le_bytes));
+    utf16.extend(
+        "Perché è già così\r\n😀 fine\r\n"
+            .encode_utf16()
+            .flat_map(u16::to_le_bytes),
+    );
     let files: Vec<(PathBuf, Vec<u8>)> = [
         ("utf16le.txt", utf16),
-        ("ansi.txt", b"Perch\xe9 la citt\xe0 \xe8 gi\xe0 cos\xec: 20 \x80\nfine\n".to_vec()),
-        ("crlf.md", b"# Title\r\n\r\n- one\r\n- two\r\nno final break".to_vec()),
+        (
+            "ansi.txt",
+            b"Perch\xe9 la citt\xe0 \xe8 gi\xe0 cos\xec: 20 \x80\nfine\n".to_vec(),
+        ),
+        (
+            "crlf.md",
+            b"# Title\r\n\r\n- one\r\n- two\r\nno final break".to_vec(),
+        ),
     ]
     .into_iter()
     .map(|(name, bytes)| {
@@ -129,13 +156,27 @@ fn saving_writes_unedited_files_back_byte_for_byte_and_converts_line_endings() {
     let crlf = &files[2].0;
     run.show(crlf);
     command_and_wait_for_save(crlf, &[EOL_LF, SAVE]);
-    assert_eq!(std::fs::read(crlf).unwrap(), b"# Title\n\n- one\n- two\nno final break");
+    assert_eq!(
+        std::fs::read(crlf).unwrap(),
+        b"# Title\n\n- one\n- two\nno final break"
+    );
 
     // No temp file is left next to the saved ones.
-    let mut left: Vec<String> =
-        std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+    let mut left: Vec<String> = std::fs::read_dir(&dir)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
     left.sort();
-    assert_eq!(left, ["ansi.txt", "crlf.md", "requests.log", "tabs.txt", "utf16le.txt"]);
+    assert_eq!(
+        left,
+        [
+            "ansi.txt",
+            "crlf.md",
+            "requests.log",
+            "tabs.txt",
+            "utf16le.txt"
+        ]
+    );
 
     drop(resident_process);
     wait_until("the window to go away", || resident().is_none());

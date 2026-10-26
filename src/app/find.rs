@@ -11,7 +11,8 @@ use std::cell::RefCell;
 use windows::core::{w, PCWSTR};
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::Graphics::Gdi::{
-    CreateFontW, DeleteObject, FONT_CHARSET, FONT_CLIP_PRECISION, FONT_OUTPUT_PRECISION, FONT_QUALITY, HFONT, HGDIOBJ,
+    CreateFontW, DeleteObject, FONT_CHARSET, FONT_CLIP_PRECISION, FONT_OUTPUT_PRECISION,
+    FONT_QUALITY, HFONT, HGDIOBJ,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Controls::{EM_SETCUEBANNER, EM_SETSEL};
@@ -110,7 +111,9 @@ fn layout(a: &App, mode: Mode) -> FindLayout {
 
 fn shown_read_only(a: &App) -> bool {
     let tabs = a.tabs.borrow();
-    tabs.active().and_then(|id| tabs.get(id)).is_some_and(Tab::read_only)
+    tabs.active()
+        .and_then(|id| tabs.get(id))
+        .is_some_and(Tab::read_only)
 }
 
 fn invalidate_band(a: &App) {
@@ -121,7 +124,9 @@ fn invalidate_band(a: &App) {
 // --- The EDIT controls ---------------------------------------------------------
 
 fn text(field: Field) -> String {
-    let Some(hwnd) = edit(field) else { return String::new() };
+    let Some(hwnd) = edit(field) else {
+        return String::new();
+    };
     unsafe {
         let len = GetWindowTextLengthW(hwnd).max(0) as usize;
         let mut buf = vec![0u16; len + 1];
@@ -170,7 +175,12 @@ fn ensure_controls(a: &App) {
             None,
         )
         .unwrap_or_default();
-        SendMessageW(hwnd, EM_SETCUEBANNER, Some(WPARAM(1)), Some(LPARAM(cue.0 as isize)));
+        SendMessageW(
+            hwnd,
+            EM_SETCUEBANNER,
+            Some(WPARAM(1)),
+            Some(LPARAM(cue.0 as isize)),
+        );
         let _ = SetWindowSubclass(hwnd, Some(edit_proc), SUBCLASS_ID, 0);
         hwnd
     };
@@ -193,8 +203,22 @@ pub fn place(a: &App) {
     let font = font.map(|(_, h)| h).unwrap_or_else(|| {
         let px = (EDIT_FONT * dpi as f32 / 96.0).round() as i32;
         let h = unsafe {
-            CreateFontW(-px, 0, 0, 0, 400, 0, 0, 0, FONT_CHARSET(1), FONT_OUTPUT_PRECISION(0), FONT_CLIP_PRECISION(0),
-                FONT_QUALITY(5), 0, w!("Segoe UI"))
+            CreateFontW(
+                -px,
+                0,
+                0,
+                0,
+                400,
+                0,
+                0,
+                0,
+                FONT_CHARSET(1),
+                FONT_OUTPUT_PRECISION(0),
+                FONT_CLIP_PRECISION(0),
+                FONT_QUALITY(5),
+                0,
+                w!("Segoe UI"),
+            )
         };
         let old = st(|f| f.font.replace((dpi, h)));
         for e in edits {
@@ -208,7 +232,11 @@ pub fn place(a: &App) {
         h
     });
     let _ = font;
-    for (field, hwnd) in [(Field::Find, edits[0]), (Field::Replace, edits[1]), (Field::Goto, edits[2])] {
+    for (field, hwnd) in [
+        (Field::Find, edits[0]),
+        (Field::Replace, edits[1]),
+        (Field::Goto, edits[2]),
+    ] {
         let shown = match mode {
             Mode::Hidden => false,
             Mode::Find => field == Field::Find,
@@ -218,16 +246,39 @@ pub fn place(a: &App) {
         unsafe {
             if shown {
                 let r = l.edit_rect(field);
-                let _ = SetWindowPos(hwnd, None, r.left, r.top, r.right - r.left, r.bottom - r.top, SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+                let _ = SetWindowPos(
+                    hwnd,
+                    None,
+                    r.left,
+                    r.top,
+                    r.right - r.left,
+                    r.bottom - r.top,
+                    SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW,
+                );
             } else {
-                let _ = SetWindowPos(hwnd, None, 0, 0, 0, 0, SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE | SWP_HIDEWINDOW);
+                let _ = SetWindowPos(
+                    hwnd,
+                    None,
+                    0,
+                    0,
+                    0,
+                    0,
+                    SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE | SWP_HIDEWINDOW,
+                );
             }
         }
     }
 }
 
 /// Keys in an input: Enter, Shift+Enter, Esc, Tab and F3 are the bar's.
-unsafe extern "system" fn edit_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM, _id: usize, _data: usize) -> LRESULT {
+unsafe extern "system" fn edit_proc(
+    hwnd: HWND,
+    msg: u32,
+    wp: WPARAM,
+    lp: LPARAM,
+    _id: usize,
+    _data: usize,
+) -> LRESULT {
     unsafe {
         let field = field_of(GetDlgCtrlID(hwnd) as u16);
         if let (Some(field), Some(a)) = (field, app()) {
@@ -269,7 +320,9 @@ unsafe extern "system" fn edit_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
 /// `WM_COMMAND` from an input. Returns false if it is not one of ours.
 pub fn control_notify(a: &App, wp: WPARAM, lp: LPARAM) -> bool {
     let (id, code) = ((wp.0 & 0xffff) as u16, ((wp.0 >> 16) & 0xffff) as u16);
-    let Some(field) = field_of(id).filter(|_| lp.0 != 0) else { return false };
+    let Some(field) = field_of(id).filter(|_| lp.0 != 0) else {
+        return false;
+    };
     match code {
         EN_SETFOCUS => {
             st(|f| f.focus = Some(field));
@@ -291,15 +344,25 @@ pub fn control_notify(a: &App, wp: WPARAM, lp: LPARAM) -> bool {
 /// first input. Find and Replace take the selection as the word to find.
 pub fn open(a: &App, mode: Mode) {
     // A read-only Tab can be searched, not replaced in.
-    let mode = if mode == Mode::Replace && shown_read_only(a) { Mode::Find } else { mode };
+    let mode = if mode == Mode::Replace && shown_read_only(a) {
+        Mode::Find
+    } else {
+        mode
+    };
     ensure_controls(a);
     a.editor.define_find_indicators();
-    let word = (mode != Mode::Goto).then(|| a.editor.selected_word(PREFILL_MAX)).flatten();
+    let word = (mode != Mode::Goto)
+        .then(|| a.editor.selected_word(PREFILL_MAX))
+        .flatten();
     let before = st(|f| std::mem::replace(&mut f.mode, mode));
     if before != mode {
         relayout(a);
     }
-    let first = if mode == Mode::Goto { Field::Goto } else { Field::Find };
+    let first = if mode == Mode::Goto {
+        Field::Goto
+    } else {
+        Field::Find
+    };
     if let Some(word) = word {
         set_text(Field::Find, &word);
     }
@@ -481,7 +544,10 @@ fn replace_all(a: &App) {
 }
 
 fn go_to(a: &App) {
-    let lines = a.editor.call(crate::editor::sci::SCI_GETLINECOUNT, 0, 0).max(1) as usize;
+    let lines = a
+        .editor
+        .call(crate::editor::sci::SCI_GETLINECOUNT, 0, 0)
+        .max(1) as usize;
     if let Some(line) = find::go_to_line(&text(Field::Goto), lines) {
         close(a);
         a.editor.go_to_line(line);
@@ -510,7 +576,8 @@ pub fn click(a: &App, x: i32, y: i32) {
 
 pub fn hover(a: &App, x: i32, y: i32) {
     let mode = open_mode();
-    let hit = Some(layout(a, mode).hit_test(x, y)).filter(|h| *h != FindHit::None && !matches!(h, FindHit::Field(_)));
+    let hit = Some(layout(a, mode).hit_test(x, y))
+        .filter(|h| *h != FindHit::None && !matches!(h, FindHit::Field(_)));
     if st(|f| std::mem::replace(&mut f.hover, hit)) != hit {
         invalidate_band(a);
     }
@@ -532,7 +599,10 @@ pub fn view(a: &App) -> Option<FindView> {
     Some(st(|f| FindView {
         layout: l,
         match_case: f.match_case,
-        count: f.count_note.clone().unwrap_or_else(|| find::count_label(f.no_needle, f.current, &f.matches)),
+        count: f
+            .count_note
+            .clone()
+            .unwrap_or_else(|| find::count_label(f.no_needle, f.current, &f.matches)),
         hover: f.hover,
         focus: f.focus,
     }))

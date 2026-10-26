@@ -15,13 +15,15 @@ use std::path::Path;
 
 use windows::core::BOOL;
 use windows::Win32::Foundation::{HWND, LPARAM, RECT};
-use windows::Win32::Graphics::Gdi::{EnumDisplayMonitors, GetMonitorInfoW, HDC, HMONITOR, MONITORINFO};
+use windows::Win32::Graphics::Gdi::{
+    EnumDisplayMonitors, GetMonitorInfoW, HDC, HMONITOR, MONITORINFO,
+};
 use windows::Win32::UI::Shell::{SHAddToRecentDocs, SHARD_PATHW};
 use windows::Win32::UI::WindowsAndMessaging::*;
 
 use super::menu::Item;
-use crate::editor::sci;
 use super::{cmd, command, wide, App};
+use crate::editor::sci;
 use crate::prefs::{self, Placement, Prefs};
 use crate::proto::TIMER_PREFS;
 use crate::tabs::{Action, StatusNote, Tabs};
@@ -45,7 +47,10 @@ fn with<R>(f: impl FnOnce(&mut State) -> R) -> R {
         let mut s = s.borrow_mut();
         let state = s.get_or_insert_with(|| {
             let prefs = prefs::load();
-            State { normal: prefs.window, prefs }
+            State {
+                normal: prefs.window,
+                prefs,
+            }
         });
         f(state)
     })
@@ -59,7 +64,15 @@ pub fn restore_window(hwnd: HWND) -> bool {
     let (window, maximized) = with(|s| (s.prefs.window, s.prefs.maximized));
     if let Some(want) = window.and_then(|w| prefs::clamp_to_work_areas(w, &work_areas())) {
         unsafe {
-            let _ = SetWindowPos(hwnd, None, want.x, want.y, want.w, want.h, SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+            let _ = SetWindowPos(
+                hwnd,
+                None,
+                want.x,
+                want.y,
+                want.w,
+                want.h,
+                SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
+            );
         }
     }
     // The Window now sits where it sits (the default if the monitor is gone):
@@ -87,7 +100,8 @@ pub fn set_wrap(a: &App, wrap: bool) {
 
 /// SCN_ZOOM: remember the new zoom.
 pub fn zoom_changed(a: &App) {
-    let points = (a.editor.call(sci::SCI_GETZOOM, 0, 0) as i32).clamp(prefs::ZOOM_MIN, prefs::ZOOM_MAX);
+    let points =
+        (a.editor.call(sci::SCI_GETZOOM, 0, 0) as i32).clamp(prefs::ZOOM_MIN, prefs::ZOOM_MAX);
     if with(|s| std::mem::replace(&mut s.prefs.zoom, points)) != points {
         arm(a.hwnd);
     }
@@ -105,7 +119,14 @@ fn note_normal(hwnd: HWND) {
         if !IsZoomed(hwnd).as_bool() && !IsIconic(hwnd).as_bool() {
             let mut r = RECT::default();
             if GetWindowRect(hwnd, &mut r).is_ok() {
-                with(|s| s.normal = Some(Placement { x: r.left, y: r.top, w: r.right - r.left, h: r.bottom - r.top }));
+                with(|s| {
+                    s.normal = Some(Placement {
+                        x: r.left,
+                        y: r.top,
+                        w: r.right - r.left,
+                        h: r.bottom - r.top,
+                    })
+                });
             }
         }
     }
@@ -136,10 +157,18 @@ fn work_areas() -> Vec<Placement> {
     unsafe extern "system" fn each(m: HMONITOR, _: HDC, _: *mut RECT, lp: LPARAM) -> BOOL {
         unsafe {
             let list = &mut *(lp.0 as *mut Vec<Placement>);
-            let mut mi = MONITORINFO { cbSize: std::mem::size_of::<MONITORINFO>() as u32, ..Default::default() };
+            let mut mi = MONITORINFO {
+                cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+                ..Default::default()
+            };
             if GetMonitorInfoW(m, &mut mi).as_bool() {
                 let r = mi.rcWork;
-                list.push(Placement { x: r.left, y: r.top, w: r.right - r.left, h: r.bottom - r.top });
+                list.push(Placement {
+                    x: r.left,
+                    y: r.top,
+                    w: r.right - r.left,
+                    h: r.bottom - r.top,
+                });
             }
         }
         true.into()
@@ -194,7 +223,9 @@ pub fn is_command(id: u16) -> bool {
 /// A recent file was picked: open it (which moves it to the top), or drop it
 /// from the list with a short note if it is gone.
 pub fn open(a: &App, id: u16) {
-    let Some(path) = with(|s| s.prefs.recent.get((id - cmd::RECENT) as usize).cloned()) else { return };
+    let Some(path) = with(|s| s.prefs.recent.get((id - cmd::RECENT) as usize).cloned()) else {
+        return;
+    };
     if std::fs::metadata(&path).is_ok() {
         command(a, |t: &mut Tabs| t.open(std::slice::from_ref(&path)));
     } else {

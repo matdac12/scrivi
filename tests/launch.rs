@@ -66,13 +66,20 @@ fn wait_exit(child: &mut Child, what: &str) -> ExitStatus {
         if let Some(s) = child.try_wait().unwrap() {
             return s;
         }
-        assert!(t.elapsed() < Duration::from_secs(15), "timed out waiting for {what} to exit");
+        assert!(
+            t.elapsed() < Duration::from_secs(15),
+            "timed out waiting for {what} to exit"
+        );
         std::thread::sleep(Duration::from_millis(25));
     }
 }
 
 fn lines(log: &Path) -> Vec<String> {
-    std::fs::read_to_string(log).unwrap_or_default().lines().map(String::from).collect()
+    std::fs::read_to_string(log)
+        .unwrap_or_default()
+        .lines()
+        .map(String::from)
+        .collect()
 }
 
 /// A handing-off process exits once the resident has *posted* the request, so the log line
@@ -84,7 +91,10 @@ fn wait_lines(log: &Path, n: usize) -> Vec<String> {
         if l.len() >= n {
             return l;
         }
-        assert!(t.elapsed() < Duration::from_secs(5), "timed out waiting for {n} request lines, have {l:?}");
+        assert!(
+            t.elapsed() < Duration::from_secs(5),
+            "timed out waiting for {n} request lines, have {l:?}"
+        );
         std::thread::sleep(Duration::from_millis(25));
     }
 }
@@ -99,18 +109,28 @@ impl Drop for Resident {
 }
 
 fn temp_dir(test: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("scrivi-launch-test-{}-{test}", std::process::id()));
+    let dir =
+        std::env::temp_dir().join(format!("scrivi-launch-test-{}-{test}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     dir
 }
 
 #[cfg(debug_assertions)]
 fn key_exists(subkey: &str) -> bool {
-    use windows::Win32::System::Registry::{RegCloseKey, RegOpenKeyExW, HKEY, HKEY_CURRENT_USER, KEY_READ};
+    use windows::Win32::System::Registry::{
+        RegCloseKey, RegOpenKeyExW, HKEY, HKEY_CURRENT_USER, KEY_READ,
+    };
     let k: Vec<u16> = subkey.encode_utf16().chain(std::iter::once(0)).collect();
     unsafe {
         let mut h = HKEY::default();
-        let ok = RegOpenKeyExW(HKEY_CURRENT_USER, PCWSTR(k.as_ptr()), None, KEY_READ, &mut h).is_ok();
+        let ok = RegOpenKeyExW(
+            HKEY_CURRENT_USER,
+            PCWSTR(k.as_ptr()),
+            None,
+            KEY_READ,
+            &mut h,
+        )
+        .is_ok();
         if ok {
             let _ = RegCloseKey(h);
         }
@@ -131,7 +151,10 @@ fn delete_tree(subkey: &str) {
 #[test]
 fn launch_lifecycle() {
     let me = Instance::new("lifecycle");
-    let (find, scrivi) = (|| me.find(), |log: &Path, args: &[&str]| me.scrivi(log, args));
+    let (find, scrivi) = (
+        || me.find(),
+        |log: &Path, args: &[&str]| me.scrivi(log, args),
+    );
     assert!(Path::new(EXE).exists());
     assert!(find().is_none());
     let dir = temp_dir("lifecycle");
@@ -144,7 +167,10 @@ fn launch_lifecycle() {
         let prefix = format!(
             r"Software\ScriviTest-{}-{}",
             std::process::id(),
-            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().subsec_nanos()
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .subsec_nanos()
         );
         let prog = format!(r"{prefix}\Software\Classes\Scrivi.TextFile");
         let run = |arg: &str| {
@@ -155,7 +181,10 @@ fn launch_lifecycle() {
         let registered = run("--register") && key_exists(&prog);
         let removed = run("--unregister") && !key_exists(&prog);
         delete_tree(&prefix);
-        assert!(registered, "--register did not write the ProgID under the prefix");
+        assert!(
+            registered,
+            "--register did not write the ProgID under the prefix"
+        );
         assert!(removed, "--unregister left the ProgID under the prefix");
     }
     assert!(find().is_none());
@@ -180,21 +209,34 @@ fn launch_lifecycle() {
     assert!(scrivi(&log, &[]).status().unwrap().success());
     assert_eq!(wait_lines(&log, 3)[2], "NewTab");
     let (a, b) = (dir.join("a.txt"), dir.join("b with space.md"));
-    assert!(scrivi(&log, &[a.to_str().unwrap(), b.to_str().unwrap()]).status().unwrap().success());
-    assert_eq!(wait_lines(&log, 4)[3], format!("Open\t{}\t{}", a.display(), b.display()));
+    assert!(scrivi(&log, &[a.to_str().unwrap(), b.to_str().unwrap()])
+        .status()
+        .unwrap()
+        .success());
+    assert_eq!(
+        wait_lines(&log, 4)[3],
+        format!("Open\t{}\t{}", a.display(), b.display())
+    );
 
     // A relative path arrives absolute.
     let mut rel = scrivi(&log, &["rel.md"]);
     rel.current_dir(&dir);
     assert!(rel.status().unwrap().success());
-    assert_eq!(wait_lines(&log, 5)[4], format!("Open\t{}", dir.join("rel.md").display()));
+    assert_eq!(
+        wait_lines(&log, 5)[4],
+        format!("Open\t{}", dir.join("rel.md").display())
+    );
     let before = wait_lines(&log, 5).len();
 
     // Explorer opening 10 files at once leaves one process: ten concurrent
     // launches all hand over and exit 0, and the one resident saw all ten.
-    let files: Vec<String> = (0..10).map(|i| dir.join(format!("f{i}.md")).display().to_string()).collect();
-    let mut children: Vec<Child> =
-        files.iter().map(|f| scrivi(&log, &[f.as_str()]).spawn().unwrap()).collect();
+    let files: Vec<String> = (0..10)
+        .map(|i| dir.join(format!("f{i}.md")).display().to_string())
+        .collect();
+    let mut children: Vec<Child> = files
+        .iter()
+        .map(|f| scrivi(&log, &[f.as_str()]).spawn().unwrap())
+        .collect();
     for c in &mut children {
         assert!(wait_exit(c, "a concurrent launch").success());
     }
@@ -217,23 +259,31 @@ fn launch_lifecycle() {
 #[test]
 fn cold_race_leaves_one_resident() {
     let me = Instance::new("race");
-    let (find, scrivi) = (|| me.find(), |log: &Path, args: &[&str]| me.scrivi(log, args));
+    let (find, scrivi) = (
+        || me.find(),
+        |log: &Path, args: &[&str]| me.scrivi(log, args),
+    );
     assert!(find().is_none());
     let dir = temp_dir("race");
     std::fs::create_dir_all(&dir).unwrap();
     let log = dir.join("requests.log");
 
-    let files: Vec<String> = (0..4).map(|i| dir.join(format!("r{i}.md")).display().to_string()).collect();
-    let mut children: Vec<Child> =
-        files.iter().map(|f| scrivi(&log, &[f.as_str()]).spawn().unwrap()).collect();
+    let files: Vec<String> = (0..4)
+        .map(|i| dir.join(format!("r{i}.md")).display().to_string())
+        .collect();
+    let mut children: Vec<Child> = files
+        .iter()
+        .map(|f| scrivi(&log, &[f.as_str()]).spawn().unwrap())
+        .collect();
     wait_until("the resident window", || find().is_some());
     wait_lines(&log, files.len());
     // Exactly one of the four is still running: the resident.
     let mut resident = None;
     let t = Instant::now();
     while t.elapsed() < Duration::from_secs(15) {
-        let alive: Vec<usize> =
-            (0..children.len()).filter(|&i| children[i].try_wait().unwrap().is_none()).collect();
+        let alive: Vec<usize> = (0..children.len())
+            .filter(|&i| children[i].try_wait().unwrap().is_none())
+            .collect();
         if alive.len() == 1 {
             resident = Some(alive[0]);
             break;

@@ -73,7 +73,10 @@ fn worth_checking(token: &str) -> bool {
     if letters.iter().all(|c| c.is_uppercase()) {
         return false;
     }
-    !letters[1..].iter().zip(&letters).any(|(c, prev)| c.is_uppercase() && prev.is_lowercase())
+    !letters[1..]
+        .iter()
+        .zip(&letters)
+        .any(|(c, prev)| c.is_uppercase() && prev.is_lowercase())
 }
 
 /// Whether the chunk of text between two spaces is an email address, a URL or
@@ -89,7 +92,11 @@ fn is_address(chunk: &str) -> bool {
 /// The words of `text` to check inside `window`: byte ranges of tokens that
 /// lie in prose per `runs`. `window` must start and end on character
 /// boundaries (line edges do).
-pub fn words(text: &str, runs: &[(Range<usize>, Style)], window: Range<usize>) -> Vec<Range<usize>> {
+pub fn words(
+    text: &str,
+    runs: &[(Range<usize>, Style)],
+    window: Range<usize>,
+) -> Vec<Range<usize>> {
     let mut out = Vec::new();
     for part in checkable_ranges(text.len(), runs) {
         let (start, end) = (part.start.max(window.start), part.end.min(window.end));
@@ -106,8 +113,12 @@ pub fn words(text: &str, runs: &[(Range<usize>, Style)], window: Range<usize>) -
             let from = from + text[from..to].find(token).unwrap_or(0);
             let to = from + token.len();
             // The chunk around the token, within this stretch of prose.
-            let lo = text[start..from].rfind(char::is_whitespace).map_or(start, |i| start + i);
-            let hi = text[to..end].find(char::is_whitespace).map_or(end, |i| to + i);
+            let lo = text[start..from]
+                .rfind(char::is_whitespace)
+                .map_or(start, |i| start + i);
+            let hi = text[to..end]
+                .find(char::is_whitespace)
+                .map_or(end, |i| to + i);
             if is_address(text[lo..hi].trim_start()) {
                 return;
             }
@@ -141,7 +152,10 @@ mod tests {
 
     fn found(text: &str) -> Vec<&str> {
         let runs = style_runs(text);
-        words(text, &runs, 0..text.len()).into_iter().map(|r| &text[r]).collect()
+        words(text, &runs, 0..text.len())
+            .into_iter()
+            .map(|r| &text[r])
+            .collect()
     }
 
     #[test]
@@ -187,41 +201,65 @@ mod tests {
 
     #[test]
     fn prose_words_are_found() {
-        assert_eq!(found("Prenotare il tagliandoo"), ["Prenotare", "il", "tagliandoo"]);
+        assert_eq!(
+            found("Prenotare il tagliandoo"),
+            ["Prenotare", "il", "tagliandoo"]
+        );
     }
 
     #[test]
     fn code_is_not_checked() {
         assert_eq!(found("Use `fooo` now"), ["Use", "now"]);
-        assert_eq!(found("text\n\n```\nbaaad code\n```\n\nmore"), ["text", "more"]);
+        assert_eq!(
+            found("text\n\n```\nbaaad code\n```\n\nmore"),
+            ["text", "more"]
+        );
     }
 
     #[test]
     fn urls_and_link_addresses_are_not_checked() {
         assert_eq!(found("see https://exampple.org/pagee now"), ["see", "now"]);
-        assert_eq!(found("[the sitte](http://exampple.org) ok"), ["the", "sitte", "ok"]);
+        assert_eq!(
+            found("[the sitte](http://exampple.org) ok"),
+            ["the", "sitte", "ok"]
+        );
     }
 
     #[test]
     fn headings_and_emphasis_are_checked() {
-        assert_eq!(found("# Titlo\n\n**bold** and _ital_"), ["Titlo", "bold", "and", "ital"]);
+        assert_eq!(
+            found("# Titlo\n\n**bold** and _ital_"),
+            ["Titlo", "bold", "and", "ital"]
+        );
     }
 
     #[test]
     fn apostrophes_stay_inside_words_and_quotes_do_not() {
-        assert_eq!(found("dell'anno and don't, 'quoted'"), ["dell'anno", "and", "don't", "quoted"]);
+        assert_eq!(
+            found("dell'anno and don't, 'quoted'"),
+            ["dell'anno", "and", "don't", "quoted"]
+        );
         assert_eq!(found("l\u{2019}albero"), ["l\u{2019}albero"]);
     }
 
     #[test]
     fn numbers_acronyms_identifiers_and_single_letters_are_skipped() {
-        assert_eq!(found("abc123 HTTP GitHub snake_case a x 2024 fine"), ["fine"]);
+        assert_eq!(
+            found("abc123 HTTP GitHub snake_case a x 2024 fine"),
+            ["fine"]
+        );
     }
 
     #[test]
     fn email_and_path_pieces_are_skipped() {
-        assert_eq!(found("mail foo@barr.example or C:\\tmpp\\filee ok"), ["mail", "or", "ok"]);
-        assert_eq!(found("see /usr/locall/bin and ~/dokuments ok"), ["see", "and", "ok"]);
+        assert_eq!(
+            found("mail foo@barr.example or C:\\tmpp\\filee ok"),
+            ["mail", "or", "ok"]
+        );
+        assert_eq!(
+            found("see /usr/locall/bin and ~/dokuments ok"),
+            ["see", "and", "ok"]
+        );
         assert_eq!(found("clientee/fornitore"), ["clientee", "fornitore"]);
     }
 
@@ -235,13 +273,20 @@ mod tests {
         let text = "uno due\ntre quattro\ncinque";
         let runs = style_runs(text);
         let window = 8..19;
-        let got: Vec<&str> = words(text, &runs, window).into_iter().map(|r| &text[r]).collect();
+        let got: Vec<&str> = words(text, &runs, window)
+            .into_iter()
+            .map(|r| &text[r])
+            .collect();
         assert_eq!(got, ["tre", "quattro"]);
     }
 
     #[test]
     fn checkable_ranges_cut_out_code() {
-        let runs = vec![(2..4, Style::InlineCode), (6..7, Style::Bold), (8..9, Style::Url)];
+        let runs = vec![
+            (2..4, Style::InlineCode),
+            (6..7, Style::Bold),
+            (8..9, Style::Url),
+        ];
         assert_eq!(checkable_ranges(10, &runs), vec![0..2, 4..8, 9..10]);
         assert_eq!(checkable_ranges(0, &[]), Vec::<Range<usize>>::new());
         assert_eq!(checkable_ranges(5, &[]), vec![0..5]);

@@ -838,11 +838,19 @@ impl Tabs {
     /// [`Tabs::save_as_chosen`], with the chosen file's identity if it exists
     /// and `app` could read it: an alias of an open file is refused too, and
     /// an alias of a lossy Tab's own file is not overwritten.
-    pub fn save_as_chosen_with_id(&mut self, id: TabId, path: PathBuf, file_id: Option<FileId>) -> Vec<Action> {
+    pub fn save_as_chosen_with_id(
+        &mut self,
+        id: TabId,
+        path: PathBuf,
+        file_id: Option<FileId>,
+    ) -> Vec<Action> {
         let Some(tab) = self.get(id) else {
             return Vec::new();
         };
-        let elsewhere = self.tabs.iter().find(|t| t.id != id && t.is_at_id(&path, file_id));
+        let elsewhere = self
+            .tabs
+            .iter()
+            .find(|t| t.id != id && t.is_at_id(&path, file_id));
         match elsewhere {
             Some(other) => {
                 let name = other.name();

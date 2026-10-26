@@ -61,21 +61,33 @@ pub fn all_matches(t: &impl Text, needle: &str, match_case: bool) -> Matches {
 }
 
 /// The first match starting at or after `from`, wrapping to the top.
-pub fn next_match(t: &impl Text, needle: &str, match_case: bool, from: usize) -> Option<Range<usize>> {
+pub fn next_match(
+    t: &impl Text,
+    needle: &str,
+    match_case: bool,
+    from: usize,
+) -> Option<Range<usize>> {
     if needle.is_empty() {
         return None;
     }
     let len = t.len();
-    t.find(needle, from.min(len), len, match_case).or_else(|| t.find(needle, 0, len, match_case))
+    t.find(needle, from.min(len), len, match_case)
+        .or_else(|| t.find(needle, 0, len, match_case))
 }
 
 /// The last match ending at or before `before`, wrapping to the bottom.
-pub fn prev_match(t: &impl Text, needle: &str, match_case: bool, before: usize) -> Option<Range<usize>> {
+pub fn prev_match(
+    t: &impl Text,
+    needle: &str,
+    match_case: bool,
+    before: usize,
+) -> Option<Range<usize>> {
     if needle.is_empty() {
         return None;
     }
     let len = t.len();
-    t.find(needle, before.min(len), 0, match_case).or_else(|| t.find(needle, len, 0, match_case))
+    t.find(needle, before.min(len), 0, match_case)
+        .or_else(|| t.find(needle, len, 0, match_case))
 }
 
 /// Replace `selection` if it is a match of `needle`. Returns where the text
@@ -88,7 +100,9 @@ pub fn replace_selected(
     match_case: bool,
     selection: Range<usize>,
 ) -> Option<usize> {
-    if needle.is_empty() || t.find(needle, selection.start, selection.end, match_case) != Some(selection.clone()) {
+    if needle.is_empty()
+        || t.find(needle, selection.start, selection.end, match_case) != Some(selection.clone())
+    {
         return None;
     }
     t.replace(selection.clone(), with);
@@ -134,7 +148,11 @@ pub fn go_to_line(input: &str, line_count: usize) -> Option<usize> {
 /// The bar's "n of m": nothing for an empty needle.
 pub fn count_label(needle_empty: bool, current: Option<usize>, matches: &Matches) -> String {
     let total = matches.list.len();
-    let m = if matches.capped { format!("{total}+") } else { total.to_string() };
+    let m = if matches.capped {
+        format!("{total}+")
+    } else {
+        total.to_string()
+    };
     match (needle_empty, total, current) {
         (true, ..) => String::new(),
         (false, 0, _) => "No results".into(),
@@ -147,13 +165,20 @@ pub fn count_label(needle_empty: bool, current: Option<usize>, matches: &Matches
 /// Scintilla messages: the search moves the target, never the selection.
 impl Text for Editor {
     fn find(&self, needle: &str, from: usize, to: usize, match_case: bool) -> Option<Range<usize>> {
-        self.call(SCI_SETSEARCHFLAGS, if match_case { SCFIND_MATCHCASE } else { 0 }, 0);
+        self.call(
+            SCI_SETSEARCHFLAGS,
+            if match_case { SCFIND_MATCHCASE } else { 0 },
+            0,
+        );
         self.call(SCI_SETTARGETRANGE, from, to as isize);
         let at = self.call(SCI_SEARCHINTARGET, needle.len(), needle.as_ptr() as isize);
         if at < 0 {
             return None;
         }
-        let (start, end) = (self.call(SCI_GETTARGETSTART, 0, 0), self.call(SCI_GETTARGETEND, 0, 0));
+        let (start, end) = (
+            self.call(SCI_GETTARGETSTART, 0, 0),
+            self.call(SCI_GETTARGETEND, 0, 0),
+        );
         Some(start as usize..end as usize)
     }
 
