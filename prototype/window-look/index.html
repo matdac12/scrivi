@@ -1,0 +1,425 @@
+<!doctype html>
+<!--
+  PROTOTYPE, throwaway (SCRIVI-6 "What should scrivi's window look like?").
+  Three variants of scrivi's window, switchable with ?variant=A|B|C, and the
+  states each must handle, switchable with ?state=. Arrow keys cycle variants.
+  Open this file in a browser at laptop size. Never merged to main.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>scrivi · window look (prototype)</title>
+<style>
+  :root {
+    --paper: #FCFCFB;      /* carta: editor surface */
+    --frame: #F1F1EE;      /* cornice: chrome */
+    --graphite: #1F2328;   /* grafite: text */
+    --pencil: #8A8F98;     /* matita: markers, line numbers */
+    --hair: #E3E3DF;       /* hairlines */
+    --ink: #2D4BA0;        /* inchiostro: headings, active tab */
+    --wax: #B4442C;        /* ceralacca: unsaved dot only */
+    --code-bg: #F3F1EC;
+    --caret-line: #F4F6FB;
+    --note-bg: #FBF6E6; --note-line: #E8D9A8;
+    --warn-bg: #FBEDEA; --warn-line: #EBC3B9;
+    --mono: "Cascadia Mono", "Cascadia Code", Consolas, monospace;
+    --ui: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+    --prose: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+    --read: "Sitka Text", "Sitka", Georgia, serif;
+    --read-display: "Sitka Display", "Sitka", Georgia, serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body { font-family: var(--ui); color: var(--graphite); padding: 8px 0 72px; }
+  .stage { position: relative; width: 100%; }
+  .win {
+    position: absolute; top: 0; left: 0; width: 1280px; height: 800px;
+    transform-origin: 0 0; background: var(--paper);
+    border: 1px solid #D5D5D2; border-radius: 8px; overflow: hidden;
+    box-shadow: 0 8px 28px rgba(20,24,30,.16), 0 1px 3px rgba(20,24,30,.08);
+    display: flex; flex-direction: column; font-size: 13px;
+  }
+
+  /* --- native caption + menu bar (Windows draws these) --- */
+  .caption { height: 32px; flex: none; display: flex; align-items: center; background: #FFFFFF; font-size: 12px; }
+  .caption .icon { width: 16px; height: 16px; margin: 0 10px 0 14px; border-radius: 3px; background: var(--ink); color: #fff; font: 700 10px/16px var(--ui); text-align: center; }
+  .caption .controls { margin-left: auto; display: flex; height: 100%; }
+  .caption .controls span { width: 46px; display: grid; place-items: center; font-size: 11px; color: #333; }
+  .menubar { height: 26px; flex: none; display: flex; align-items: center; padding-left: 4px; background: #FFFFFF; font-size: 12.5px; position: relative; z-index: 5; }
+  .menubar > span { padding: 3px 9px; border-radius: 4px; }
+  .menubar > span.open { background: #E8E8E6; }
+  .dropdown { position: absolute; top: 25px; min-width: 248px; background: #FFFFFF; border: 1px solid #D9D9D6; border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,.14); padding: 4px; font-size: 12.5px; }
+  .dropdown .it { display: flex; gap: 24px; align-items: center; padding: 6px 10px 6px 30px; border-radius: 4px; position: relative; }
+  .dropdown .it.hl { background: #EDEDEA; }
+  .dropdown .it .k { margin-left: auto; color: #6B7079; font-size: 11.5px; }
+  .dropdown .it .chk { position: absolute; left: 10px; color: var(--graphite); }
+  .dropdown .sep { height: 1px; background: #E6E6E3; margin: 4px 6px; }
+  .dropdown.sub { min-width: 210px; }
+
+  /* --- editor (Scintilla) --- */
+  .body { flex: 1; display: flex; flex-direction: column; min-height: 0; position: relative; }
+  .editor { flex: 1; overflow: hidden; background: var(--paper); padding-top: 10px; position: relative; }
+  .ln { display: flex; font: 14.5px/26px var(--mono); }
+  .ln .g { width: 52px; flex: none; text-align: right; padding-right: 14px; color: #B3B6BC; font-size: 12.5px; user-select: none; }
+  .ln .t { white-space: pre-wrap; word-break: break-word; flex: 1; padding-right: 28px; }
+  .ln.caret { background: var(--caret-line); }
+  .ln.caret .t::after { content: ""; display: inline-block; width: 2px; height: 18px; background: var(--graphite); vertical-align: -3px; margin-left: 1px; }
+  .mk { color: #A4A8B0; }
+  .h1 { color: var(--ink); font-weight: 700; }
+  .h2 { color: #3557B0; font-weight: 700; }
+  .h3 { color: #4A64A8; font-weight: 700; }
+  .b { font-weight: 700; } .i { font-style: italic; }
+  .code { background: var(--code-bg); color: #8A3B22; border-radius: 3px; }
+  .fence .t { background: var(--code-bg); color: #3D4148; }
+  .link { color: var(--ink); text-decoration: underline; text-decoration-color: rgba(45,75,160,.35); text-underline-offset: 3px; }
+  .url { color: #A4A8B0; }
+  .quote { color: #6B7079; font-style: italic; }
+  .done { color: #3E7D55; font-weight: 600; }
+  .hit { background: #FFE58F; border-radius: 2px; }
+  .hit.cur { background: #F5B83D; }
+  .sel { background: #CFE0FF; }
+
+  /* variant B / C: prose layout */
+  .prose .ln { font-family: var(--prose); font-size: 15px; }
+  .prose .ln .mk, .prose .ln .code, .prose .fence .t, .prose .tbl .t { font-family: var(--mono); font-size: 14px; }
+  .column .ln { width: 760px; margin: 0 auto; }
+  .column .ln .g { display: none; }
+  .column .ln.caret { background: none; box-shadow: inset 3px 0 0 var(--caret-line); }
+  .column .editor { padding-top: 34px; }
+
+  /* --- bars that drop in under the tabs --- */
+  .bar { flex: none; display: flex; align-items: center; gap: 10px; padding: 0 12px 0 16px; height: 38px; font-size: 12.5px; border-bottom: 1px solid var(--hair); }
+  .bar.note { background: var(--note-bg); border-color: var(--note-line); }
+  .bar.warn { background: var(--warn-bg); border-color: var(--warn-line); }
+  .bar .msg b { font-weight: 600; }
+  .bar .acts { margin-left: auto; display: flex; gap: 6px; }
+  .btn { font: 12px var(--ui); padding: 4px 12px; border-radius: 5px; border: 1px solid #CFCFCB; background: #FFF; }
+  .btn.primary { background: var(--ink); border-color: var(--ink); color: #fff; }
+  .x { color: #7A7F88; padding: 0 6px; font-size: 13px; }
+  .find { background: var(--frame); flex-direction: column; align-items: stretch; height: auto; padding: 6px 12px; gap: 6px; }
+  .find .row { display: flex; align-items: center; gap: 8px; }
+  .field { width: 300px; height: 26px; border: 1px solid #CFCFCB; border-radius: 5px; background: #FFF; padding: 0 8px; display: flex; align-items: center; font: 13px var(--ui); }
+  .field.focus { border-color: var(--ink); box-shadow: 0 0 0 1px var(--ink); }
+  .tog { font: 600 11.5px var(--mono); padding: 3px 6px; border-radius: 4px; border: 1px solid transparent; color: #555; }
+  .tog.on { border-color: #B9C5E6; background: #E7ECF8; color: var(--ink); }
+  .count { color: #6B7079; font-size: 12px; min-width: 70px; }
+  .ib { width: 26px; height: 26px; display: grid; place-items: center; border-radius: 4px; color: #444; }
+
+  /* --- status bar --- */
+  .status { flex: none; height: 26px; display: flex; align-items: center; font-size: 12px; color: #5D626B; }
+  .status .seg { padding: 0 14px; height: 100%; display: flex; align-items: center; }
+
+  /* --- Rendered view (WebView2 page) --- */
+  .rendered { flex: 1; overflow: hidden; background: #FFFFFF; }
+  .page { width: 700px; margin: 0 auto; padding: 44px 0 40px; font: 17px/1.62 var(--read); color: #23262B; }
+  .page h1 { font: 600 34px/1.15 var(--read-display); color: #1C2C5C; margin: 0 0 6px; letter-spacing: -.01em; }
+  .page h2 { font: 600 22px/1.3 var(--read-display); color: #1C2C5C; margin: 30px 0 8px; }
+  .page h3 { font: 600 17px/1.3 var(--ui); text-transform: none; color: #3A4A78; margin: 24px 0 6px; }
+  .page p { margin: 0 0 12px; }
+  .page .lede { color: #5A6070; font-style: italic; }
+  .page ul { list-style: none; padding: 0; margin: 0 0 12px; }
+  .page li { padding-left: 28px; position: relative; margin: 3px 0; }
+  .page li .box { position: absolute; left: 2px; top: 6px; width: 15px; height: 15px; border: 1.5px solid #9AA0AA; border-radius: 4px; }
+  .page li .box.on { background: var(--ink); border-color: var(--ink); }
+  .page li .box.on::after { content: ""; position: absolute; left: 4px; top: 1px; width: 4px; height: 8px; border: solid #fff; border-width: 0 2px 2px 0; transform: rotate(45deg); }
+  .page li.ok { color: #7A808A; text-decoration: line-through; text-decoration-color: #B5BAC2; }
+  .page ul ul { margin: 2px 0 0; }
+  .page code { font: 14px var(--mono); background: #F3F1EC; padding: 1px 5px; border-radius: 4px; color: #8A3B22; }
+  .page pre { font: 13.5px/1.6 var(--mono); background: #F6F5F1; border: 1px solid #ECEAE3; border-radius: 8px; padding: 12px 16px; margin: 0 0 14px; }
+  .page blockquote { margin: 18px 0; padding: 2px 0 2px 18px; border-left: 3px solid #C9D2EA; color: #4B5263; font-style: italic; font-size: 19px; }
+  .page table { border-collapse: collapse; font: 14px/1.4 var(--ui); margin: 0 0 14px; }
+  .page th { text-align: left; font-weight: 600; color: #3A4050; border-bottom: 1.5px solid #CDD1D8; padding: 6px 22px 6px 0; }
+  .page td { border-bottom: 1px solid #EBECEF; padding: 6px 22px 6px 0; }
+  .page a { color: var(--ink); text-underline-offset: 3px; text-decoration-color: rgba(45,75,160,.4); }
+  .page figure { margin: 6px 0 16px; }
+  .page .img { height: 120px; border-radius: 8px; border: 1px solid #E4E6EA; background: repeating-linear-gradient(135deg, #F4F5F7 0 10px, #EEF0F3 10px 20px); display: grid; place-items: center; color: #8A909A; font: 12px var(--mono); }
+  .page figcaption { font: 12.5px var(--ui); color: #7A808A; margin-top: 6px; }
+
+  /* =========== Variant A · Prototipo: Windows 11 connected tabs =========== */
+  .vA .tabs { height: 38px; flex: none; display: flex; align-items: flex-end; gap: 2px; padding: 0 8px; background: var(--frame); border-bottom: 1px solid var(--hair); position: relative; }
+  .vA .tab { height: 31px; display: flex; align-items: center; gap: 8px; padding: 0 10px 0 12px; border-radius: 8px 8px 0 0; font-size: 12.5px; color: #4A4F57; min-width: 0; width: 178px; position: relative; }
+  .vA .tab .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+  .vA .tab:not(.on):not(:last-child)::after { content: ""; position: absolute; right: -2px; top: 9px; height: 14px; width: 1px; background: #D3D3CF; }
+  .vA .tab.on { background: var(--paper); color: var(--graphite); border: 1px solid var(--hair); border-bottom: none; height: 33px; margin-bottom: -1px; box-shadow: 0 -1px 2px rgba(0,0,0,.03); }
+  .vA .tab .ic { display: none; }
+  .vA .tab .cl { width: 18px; height: 18px; display: grid; place-items: center; border-radius: 4px; font-size: 11px; color: #6B7079; flex: none; }
+  .vA .tab .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--wax); margin: 0 5px; flex: none; }
+  .vA .plus { height: 31px; width: 30px; display: grid; place-items: center; color: #555; font-size: 17px; flex: none; }
+  .vA .scroll { margin-left: auto; display: flex; height: 31px; align-items: center; gap: 2px; color: #555; }
+  .vA .scroll span { width: 24px; height: 24px; display: grid; place-items: center; border-radius: 4px; }
+  .vA .status { background: var(--frame); border-top: 1px solid var(--hair); justify-content: flex-end; }
+  .vA .status .seg + .seg { border-left: 1px solid #DCDCD8; }
+  .vA .status .seg.left { margin-right: auto; border: none; }
+
+  /* =========== Variant B · Scrittoio: one surface, ink underline =========== */
+  .vB .menubar, .vB .caption { background: var(--paper); }
+  .vB .tabs { height: 40px; flex: none; display: flex; align-items: stretch; gap: 0; padding: 0 20px; background: var(--paper); border-bottom: 1px solid var(--hair); }
+  .vB .tab { display: flex; align-items: center; gap: 7px; padding: 0 14px; font-size: 13px; color: #7A7F88; position: relative; max-width: 190px; }
+  .vB .tab .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .vB .tab.on { color: var(--graphite); font-weight: 600; }
+  .vB .tab.on::after { content: ""; position: absolute; left: 12px; right: 12px; bottom: -1px; height: 2px; background: var(--ink); border-radius: 2px; }
+  .vB .tab .ic, .vB .tab .cl { display: none; }
+  .vB .tab.on .cl { display: grid; font-size: 11px; color: #9AA0AA; font-weight: 400; }
+  .vB .tab .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--wax); }
+  .vB .plus { display: grid; place-items: center; padding: 0 12px; color: #8A8F98; font-size: 17px; }
+  .vB .scroll { margin-left: auto; display: flex; align-items: center; gap: 4px; color: #8A8F98; }
+  .vB .status { background: var(--paper); border-top: 1px solid var(--hair); color: #8A8F98; padding: 0 8px; }
+  .vB .status .seg { padding: 0 10px; }
+  .vB .status .seg.left { margin-right: auto; }
+
+  /* =========== Variant C · Quaderno: status lives in the tab row =========== */
+  .vC .tabs { height: 40px; flex: none; display: flex; align-items: center; gap: 4px; padding: 0 10px; background: var(--frame); border-bottom: 1px solid var(--hair); }
+  .vC .tab { height: 28px; display: flex; align-items: center; gap: 7px; padding: 0 8px 0 12px; border-radius: 14px; font-size: 12.5px; color: #4A4F57; max-width: 170px; }
+  .vC .tab .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .vC .tab.on { background: #FFFFFF; color: var(--graphite); box-shadow: 0 0 0 1px #DCDCD8, 0 1px 2px rgba(0,0,0,.06); }
+  .vC .tab .ic { display: none; }
+  .vC .tab .cl { font-size: 10.5px; color: #8A8F98; width: 16px; text-align: center; }
+  .vC .tab:not(.on) .cl { visibility: hidden; }
+  .vC .tab .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--wax); margin: 0 4px; }
+  .vC .plus { width: 28px; height: 28px; display: grid; place-items: center; color: #555; font-size: 16px; border-radius: 14px; }
+  .vC .meta { margin-left: auto; display: flex; gap: 14px; font-size: 11.5px; color: #7A7F88; padding-right: 6px; white-space: nowrap; }
+  .vC .meta .flag { color: #8A5A12; }
+  .vC .scroll { display: flex; gap: 2px; color: #555; }
+  .vC .status { display: none; }
+  .vC .bar:not(.find) { order: 10; border-bottom: none; border-top: 1px solid var(--hair); }
+
+  /* --- prototype switcher (not part of the design) --- */
+  .switcher { position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%); display: flex; align-items: center; gap: 6px; background: #111; color: #fff; padding: 6px 8px; border-radius: 999px; box-shadow: 0 6px 20px rgba(0,0,0,.35); font: 12px system-ui, sans-serif; z-index: 100; max-width: calc(100vw - 16px); flex-wrap: wrap; justify-content: center; }
+  .switcher button { font: inherit; color: #fff; background: #2A2A2A; border: 0; border-radius: 999px; padding: 4px 10px; cursor: pointer; }
+  .switcher button:focus-visible { outline: 2px solid #8AB4FF; outline-offset: 1px; }
+  .switcher button.on { background: #fff; color: #111; }
+  .switcher .lbl { min-width: 130px; text-align: center; font-weight: 600; }
+  .switcher .div { width: 1px; height: 18px; background: #444; margin: 0 4px; }
+</style>
+</head>
+<body>
+<div class="stage" id="stage"><div class="win" id="win"></div></div>
+<nav class="switcher" id="sw" aria-label="Prototype switcher"></nav>
+
+<script>
+const VARIANTS = {
+  A: "Prototipo: connected tabs, line numbers",
+  B: "Scrittoio: one surface, prose font, column",
+  C: "Quaderno: pill tabs, status in the tab row",
+};
+const STATES = {
+  normal: "Normal", tabs: "12 tabs", find: "Find & replace", disk: "Disk change",
+  deleted: "Deleted on disk", large: "Large file", styling: "Styling off",
+  rendered: "Rendered view", file: "File menu", view: "View menu",
+};
+
+const NOTES = [
+"# Note di lavoro — ottobre", "",
+"Un posto unico per appunti personali e di sviluppo. Mezzo italiano, mezzo English, come sempre.", "",
+"## Oggi", "",
+"- [x] Rispondere a Giulia sul preventivo",
+"- [x] Fix the flaky test in `sync_worker`",
+"- [ ] Prenotare il tagliando della macchina",
+"- [ ] Review the PR for the **export** feature",
+"  - [ ] check the CSV escaping",
+"  - [ ] confirm _date formats_ with the team", "",
+"## Idee per scrivi", "",
+"Scrivi deve aprire qualsiasi file di testo in meno di un attimo. If it feels slower than Notepad, it has failed. Niente impostazioni, niente plugin: solo testo, tab e un tasto per leggere.", "",
+"1. Apertura istantanea, anche da Explorer",
+"2. Markdown leggero: headings in **bold**, markers grey but visible",
+"3. Rendered view on `Ctrl+E`", "",
+"> La semplicità è la sofisticazione suprema.", "",
+"### Comandi utili", "",
+"```powershell",
+"cargo run --release -- notes.md",
+"```", "",
+"| Tool   | Stack        | Idle  |",
+"|--------|--------------|-------|",
+"| tasca  | Rust · Win32 | 4 MB  |",
+"| scrivi | Rust · Win32 | 30 MB |", "",
+"Docs: [Scintilla](https://www.scintilla.org/ScintillaDoc.html)",
+];
+const CARET = 9; // 0-based line index with the caret
+
+const esc = s => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+function inline(s, find) {
+  const re = /(`[^`]+`)|(\*\*[^*]+\*\*)|(_[^_]+_)|(\[[^\]]+\]\([^)]+\))/g;
+  let out = "", last = 0, m;
+  const plain = t => find ? esc(t).replace(/(test)/gi, '<span class="hit">$1</span>') : esc(t);
+  while ((m = re.exec(s))) {
+    out += plain(s.slice(last, m.index));
+    const t = m[0];
+    if (m[1]) out += `<span class="code"><span class="mk">\`</span>${esc(t.slice(1, -1))}<span class="mk">\`</span></span>`;
+    else if (m[2]) out += `<span class="mk">**</span><span class="b">${esc(t.slice(2, -2))}</span><span class="mk">**</span>`;
+    else if (m[3]) out += `<span class="mk">_</span><span class="i">${esc(t.slice(1, -1))}</span><span class="mk">_</span>`;
+    else { const [, txt, url] = t.match(/\[([^\]]+)\]\(([^)]+)\)/); out += `<span class="mk">[</span><span class="link">${esc(txt)}</span><span class="mk">](</span><span class="url">${esc(url)}</span><span class="mk">)</span>`; }
+    last = re.lastIndex;
+  }
+  return out + plain(s.slice(last));
+}
+function styleLine(s, ctx, styled, find) {
+  if (!styled) return { html: esc(s) };
+  if (s.startsWith("```")) { ctx.fence = !ctx.fence; return { html: `<span class="mk">${esc(s)}</span>`, cls: "fence" }; }
+  if (ctx.fence) return { html: esc(s), cls: "fence" };
+  let m;
+  if ((m = s.match(/^(#{1,6}) (.*)$/))) return { html: `<span class="mk">${m[1]} </span><span class="h${m[1].length}">${inline(m[2])}</span>` };
+  if ((m = s.match(/^(\s*)([-*]) \[( |x)\] (.*)$/))) return { html: `${m[1]}<span class="mk">${m[2]} </span><span class="${m[3] === "x" ? "done" : "mk"}">[${m[3]}]</span> ${inline(m[4], find)}` };
+  if ((m = s.match(/^(\s*)([-*]|\d+\.) (.*)$/))) return { html: `${m[1]}<span class="mk">${m[2]} </span>${inline(m[3], find)}` };
+  if ((m = s.match(/^> (.*)$/))) return { html: `<span class="mk">&gt; </span><span class="quote">${esc(m[1])}</span>` };
+  if (s.startsWith("|")) return { html: s.split(/(\|)/).map(p => p === "|" || /^-+$/.test(p) ? `<span class="mk">${esc(p)}</span>` : esc(p)).join(""), cls: "tbl" };
+  return { html: inline(s, find) };
+}
+function editorHTML({ lines, styled, gutter = true, caret = CARET, find, sel }) {
+  const ctx = {};
+  return lines.map((s, i) => {
+    const r = styleLine(s, ctx, styled, find);
+    let html = r.html;
+    if (find && i === 7) html = html.replace('<span class="hit">', '<span class="hit cur">');
+    return `<div class="ln ${r.cls || ""} ${i === caret ? "caret" : ""}"><span class="g">${gutter ? i + 1 : ""}</span><span class="t">${html || " "}</span></div>`;
+  }).join("");
+}
+function logLines(n) {
+  const lv = ["INFO ", "INFO ", "DEBUG", "WARN ", "INFO "], src = ["sync_worker", "http", "db.pool", "export", "scheduler"];
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    const s = String(10 + (i * 7) % 50).padStart(2, "0"), ms = String((i * 137) % 1000).padStart(3, "0");
+    out.push(`2026-10-26 09:14:${s}.${ms} ${lv[i % 5]} [${src[i % 5]}] ${["request handled in 12 ms", "batch 4412 committed (512 rows)", "cache miss for key user:8812", "retrying upstream call (attempt 2 of 5)", "tick: 3 jobs due"][i % 5]}`);
+  }
+  return out;
+}
+
+const TABS = [
+  { n: "notes.md", md: 1 }, { n: "todo.txt" }, { n: "scrivi-ideas.md", md: 1, dirty: 1 },
+  { n: "app.log" }, { n: "Untitled 1", md: 1 },
+];
+const MORE = [
+  { n: "README.md", md: 1 }, { n: "meeting-2026-10-26.md", md: 1 }, { n: "config.ini" },
+  { n: "hosts" }, { n: "CHANGELOG.md", md: 1 }, { n: "requirements.txt" }, { n: "draft-email.md", md: 1, dirty: 1 },
+];
+
+function tabsHTML(v, st, info) {
+  const list = st === "tabs" ? TABS.concat(MORE) : TABS.slice();
+  let active = 0;
+  if (st === "large") { list.splice(5, 0, { n: "server-2026-10.log" }); active = 5; }
+  if (st === "styling") { list.splice(5, 0, { n: "export-dump.md", md: 1 }); active = 5; }
+  if (st === "disk") list[0] = { ...list[0], dirty: 1 };
+  const many = list.length > 8;
+  const tabs = list.map((t, i) => {
+    const on = i === active;
+    const w = v === "A" && many ? ' style="width:118px"' : "";
+    const trail = t.dirty && !on ? '<span class="dot" title="Unsaved changes"></span>' : t.dirty && on ? '<span class="dot" title="Unsaved changes"></span>' : '<span class="cl">✕</span>';
+    return `<div class="tab ${on ? "on" : ""}"${w}><span class="ic ${t.md ? "md" : ""}"></span><span class="nm">${t.n}</span>${trail}</div>`;
+  }).join("");
+  const scroll = many ? `<div class="scroll"><span>‹</span><span>›</span></div>` : "";
+  const meta = v === "C" ? `<div class="meta">${info.flag ? `<span class="flag">${info.flag}</span>` : ""}<span>${info.pos}</span><span>${info.eol}</span><span>${info.enc}</span></div>` : "";
+  return `<div class="tabs">${tabs}<div class="plus" title="New tab (Ctrl+T)">+</div>${v === "C" ? meta : ""}${scroll}</div>`;
+}
+
+function barsHTML(st) {
+  if (st === "find") return `<div class="bar find">
+      <div class="row"><div class="field focus">test</div><span class="tog on" title="Match case">Aa</span><span class="count">2 of 3</span><span class="ib">↑</span><span class="ib">↓</span><span class="x" style="margin-left:auto">✕</span></div>
+      <div class="row"><div class="field" style="color:#9AA0AA">Replace with</div><button class="btn">Replace</button><button class="btn">Replace all</button></div>
+    </div>`;
+  if (st === "disk") return `<div class="bar note"><span class="msg"><b>notes.md</b> changed on disk while you had unsaved edits.</span><div class="acts"><button class="btn">Keep mine</button><button class="btn primary">Reload</button></div></div>`;
+  if (st === "deleted") return `<div class="bar warn"><span class="msg"><b>notes.md</b> was deleted or renamed on disk. Your text is still here; saving writes the file again.</span><div class="acts"><button class="btn primary">Save</button></div></div>`;
+  if (st === "large") return `<div class="bar note"><span class="msg"><b>Large file</b> (212 MB): read-only, without wrap or styling.</span><div class="acts"><span class="x">✕</span></div></div>`;
+  return "";
+}
+
+function menuHTML(st) {
+  const items = (arr) => arr.map(x => x === "-" ? '<div class="sep"></div>' : `<div class="it ${x[2] || ""}">${x[3] ? `<span class="chk">${x[3]}</span>` : ""}<span>${x[0]}</span><span class="k">${x[1] || ""}</span></div>`).join("");
+  if (st === "file") return `<div class="dropdown" style="left:4px">${items([
+      ["New tab", "Ctrl+T"], ["Open…", "Ctrl+O"], ["Recent files", "›"], "-",
+      ["Save", "Ctrl+S"], ["Save as…", "Ctrl+Shift+S"], "-",
+      ["Encoding", "›", "hl"], ["Line endings", "›"], "-",
+      ["Close tab", "Ctrl+W"], ["Exit", ""]])}</div>
+    <div class="dropdown sub" style="left:256px;top:248px">${items([
+      ["UTF-8", "", "", "●"], ["UTF-8 with BOM"], ["UTF-16 LE"], ["UTF-16 BE"], ["Windows-1252 (ANSI)"], "-", ["Reopen with encoding…"]])}</div>`;
+  if (st === "view") return `<div class="dropdown" style="left:96px">${items([
+      ["Rendered view", "Ctrl+E", "hl"], "-",
+      ["Word wrap", "Alt+Z", "", "✓"], "-",
+      ["Zoom in", "Ctrl++"], ["Zoom out", "Ctrl+−"], ["Reset zoom", "Ctrl+0"]])}</div>`;
+  return "";
+}
+
+function renderedHTML() {
+  return `<div class="rendered"><article class="page">
+    <h1>Note di lavoro — ottobre</h1>
+    <p class="lede">Un posto unico per appunti personali e di sviluppo. Mezzo italiano, mezzo English, come sempre.</p>
+    <h2>Oggi</h2>
+    <ul>
+      <li class="ok"><span class="box on"></span>Rispondere a Giulia sul preventivo</li>
+      <li class="ok"><span class="box on"></span>Fix the flaky test in <code>sync_worker</code></li>
+      <li><span class="box"></span>Prenotare il tagliando della macchina</li>
+      <li><span class="box"></span>Review the PR for the <b>export</b> feature
+        <ul><li><span class="box"></span>check the CSV escaping</li><li><span class="box"></span>confirm <i>date formats</i> with the team</li></ul></li>
+    </ul>
+    <h2>Idee per scrivi</h2>
+    <p>Scrivi deve aprire qualsiasi file di testo in meno di un attimo. If it feels slower than Notepad, it has failed. Niente impostazioni, niente plugin: solo testo, tab e un tasto per leggere.</p>
+    <blockquote>La semplicità è la sofisticazione suprema.</blockquote>
+    <h3>Comandi utili</h3>
+    <pre>cargo run --release -- notes.md</pre>
+    <table><tr><th>Tool</th><th>Stack</th><th>Idle</th></tr><tr><td>tasca</td><td>Rust · Win32</td><td>4 MB</td></tr><tr><td>scrivi</td><td>Rust · Win32</td><td>30 MB</td></tr></table>
+    <figure><div class="img">./img/scrivi-window.png</div><figcaption>Local images next to the file load; remote ones don't.</figcaption></figure>
+  </article></div>`;
+}
+
+function build(v, st) {
+  const md = !["large"].includes(st);
+  const info = {
+    pos: st === "large" ? "Ln 1, Col 1" : "Ln 10, Col 43", eol: st === "large" ? "CRLF" : "LF", enc: "UTF-8",
+    flag: st === "large" ? "Read-only" : st === "styling" ? "Markdown styling off (over 1 MB)" : st === "rendered" ? "Rendered view · Esc to edit" : "",
+  };
+  const proseVariant = v === "B";
+  const column = (v === "B" || v === "C") && md;
+  let lines = NOTES, styled = true, gutter = !column;
+  if (st === "large") { lines = logLines(40); styled = false; gutter = true; }
+  if (st === "styling") { lines = NOTES.map(s => s); styled = false; }
+
+  const title = { large: "server-2026-10.log", styling: "export-dump.md" }[st] || "notes.md";
+  const body = st === "rendered" ? renderedHTML()
+    : `<div class="editor">${editorHTML({ lines, styled, gutter, caret: st === "large" ? 0 : CARET, find: st === "find" })}</div>`;
+  const status = `<div class="status"><span class="seg left">${info.flag}</span><span class="seg">${info.pos}</span><span class="seg">${info.eol}</span><span class="seg">${info.enc}</span></div>`;
+
+  const win = document.getElementById("win");
+  win.className = `win v${v} ${proseVariant && md && st !== "styling" ? "prose" : ""} ${column ? "column" : ""}`;
+  win.innerHTML = `
+    <div class="caption"><span class="icon">S</span><span>${title}${st === "large" ? " (read-only)" : ""} — scrivi</span><div class="controls"><span>—</span><span>▢</span><span>✕</span></div></div>
+    <div class="menubar"><span class="${st === "file" ? "open" : ""}">File</span><span>Edit</span><span class="${st === "view" ? "open" : ""}">View</span>${menuHTML(st)}</div>
+    ${tabsHTML(v, st, info)}
+    <div class="body">${barsHTML(st)}${body}</div>
+    ${status}`;
+}
+
+const params = new URLSearchParams(location.search);
+let v = VARIANTS[params.get("variant")] ? params.get("variant") : "A";
+let st = STATES[params.get("state")] ? params.get("state") : "normal";
+
+function fit() {
+  const stage = document.getElementById("stage"), win = document.getElementById("win");
+  const s = Math.min(1, (stage.clientWidth - 2) / 1282);
+  win.style.transform = `scale(${s})`;
+  stage.style.height = Math.ceil(802 * s) + "px";
+}
+function renderSwitcher() {
+  const keys = Object.keys(VARIANTS);
+  document.getElementById("sw").innerHTML =
+    `<button data-go="-1" aria-label="Previous variant">←</button><span class="lbl">${v} · ${VARIANTS[v].split(":")[0]}</span><button data-go="1" aria-label="Next variant">→</button><span class="div"></span>` +
+    Object.entries(STATES).map(([k, n]) => `<button data-st="${k}" class="${k === st ? "on" : ""}">${n}</button>`).join("");
+  document.title = `scrivi · ${v} ${VARIANTS[v]} · ${STATES[st]}`;
+}
+function go() {
+  history.replaceState(null, "", `?variant=${v}&state=${st}`);
+  build(v, st); renderSwitcher(); fit();
+}
+function step(d) { const k = Object.keys(VARIANTS); v = k[(k.indexOf(v) + d + k.length) % k.length]; go(); }
+document.getElementById("sw").addEventListener("click", e => {
+  const b = e.target.closest("button"); if (!b) return;
+  if (b.dataset.go) step(+b.dataset.go); else { st = b.dataset.st; go(); }
+});
+addEventListener("keydown", e => {
+  if (e.target.closest("input,textarea,[contenteditable]")) return;
+  if (e.key === "ArrowLeft") step(-1);
+  if (e.key === "ArrowRight") step(1);
+});
+addEventListener("resize", fit);
+go();
+</script>
+</body>
+</html>
