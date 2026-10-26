@@ -1480,3 +1480,11 @@ fn opening_a_path_whose_tab_is_still_loading_shows_it_once_loaded() {
         ]
     );
 }
+
+#[test]
+fn status_notes_read_as_the_spec_words_them() {
+    assert_eq!(StatusNote::ReadOnly.text(), "Read-only");
+    assert_eq!(StatusNote::StylingOff.text(), "Markdown styling off (over 1 MB)");
+    assert_eq!(StatusNote::RenderedView.text(), "Rendered view \u{b7} Esc to edit");
+    assert_eq!(StatusNote::TooLargeToRender.text(), "Too large to render");
+}

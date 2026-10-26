@@ -59,6 +59,8 @@ const GLYPH_MAX: &str = "\u{E922}";
 const GLYPH_RESTORE: &str = "\u{E923}";
 const GLYPH_CLOSE: &str = "\u{E8BB}";
 const GLYPH_ADD: &str = "\u{E710}";
+const GLYPH_LEFT: &str = "\u{E96F}";
+const GLYPH_RIGHT: &str = "\u{E970}";
 const TAB_RADIUS: f32 = 8.0;
 const TAB_TEXT_L: f32 = 12.0;
 const TAB_TEXT_GAP: f32 = 8.0;
@@ -221,6 +223,17 @@ impl Pass<'_> {
         Ok(())
     }
 
+    /// The rounded hover (or pressed) shade of a small button.
+    fn button(&self, r: Rect, hit: Hit, v: &View) -> Result<()> {
+        if v.pressed == Some(hit) {
+            self.fill_rounded(r, SMALL_RADIUS, 0x000000, HOVER_A + PRESSED_A)
+        } else if v.hover == Some(hit) {
+            self.fill_rounded(r, SMALL_RADIUS, 0x000000, HOVER_A)
+        } else {
+            Ok(())
+        }
+    }
+
     fn px(&self, dip: f32) -> i32 {
         (dip * self.scale).round() as i32
     }
@@ -364,11 +377,20 @@ fn draw_top(p: &Pass, v: &View) -> Result<()> {
     unsafe { p.rt.PopAxisAlignedClip() };
     tabs?;
 
-    // "+".
-    if matches!(v.hover, Some(Hit::NewTab)) {
-        p.fill_rounded(l.plus, SMALL_RADIUS, 0x000000, HOVER_A)?;
-    }
+    // "+", then ‹ › when the Tabs overflow.
+    p.button(l.plus, Hit::NewTab, v)?;
     p.text(GLYPH_ADD, &f.plus, l.plus, colour::PLUS)?;
+    if let Some(scroll) = l.scroll {
+        let (left, right) = l.can_scroll();
+        for (r, glyph, hit, enabled) in
+            [(scroll[0], GLYPH_LEFT, Hit::ScrollLeft, left), (scroll[1], GLYPH_RIGHT, Hit::ScrollRight, right)]
+        {
+            if enabled {
+                p.button(r, hit, v)?;
+            }
+            p.text(glyph, &f.caption, r, if enabled { colour::PLUS } else { colour::PENCIL })?;
+        }
+    }
 
     // Minimise, maximise (or restore), close.
     let glyphs = [GLYPH_MIN, if l.maximized { GLYPH_RESTORE } else { GLYPH_MAX }, GLYPH_CLOSE];
@@ -410,7 +432,11 @@ fn draw_tabs(p: &Pass, v: &View) -> Result<()> {
     let radius = TAB_RADIUS * p.scale;
     for (i, (tab, close)) in l.tabs.iter().zip(&l.tab_closes).enumerate() {
         let Some(t) = v.tabs.get(i) else { break };
-        let hovered = matches!(v.hover, Some(Hit::Tab(n) | Hit::TabClose(n)) if n == i);
+        // Scrolled out of the strip.
+        if tab.right <= l.strip.left || tab.left >= l.strip.right {
+            continue;
+        }
+        let hovered = v.hover.and_then(Hit::tab) == Some(i);
         if t.active {
             // One pixel taller than an inactive tab, covering the row's hairline.
             let shape = Rect { top: tab.top - p.px(1.0), ..*tab };
@@ -458,9 +484,7 @@ fn draw_tabs(p: &Pass, v: &View) -> Result<()> {
             let dot = D2D_RECT_F { left: cx - d, top: cy - d, right: cx + d, bottom: cy + d };
             unsafe { p.rt.FillRoundedRectangle(&rounded(dot, d), &p.brush(colour::WAX, 1.0)?) };
         } else {
-            if close_hover {
-                p.fill_rounded(*close, SMALL_RADIUS, 0x000000, HOVER_A)?;
-            }
+            p.button(*close, Hit::TabClose(i), v)?;
             p.text(GLYPH_CLOSE, &f.tab_glyph, *close, colour::TAB_GLYPH)?;
         }
     }
