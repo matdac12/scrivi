@@ -14,6 +14,7 @@ fn state() -> State {
         selection: true,
         can_paste: true,
         markdown: true,
+        rendered: false,
     }
 }
 
@@ -172,6 +173,14 @@ fn edit_commands_follow_the_editor() {
     assert!(enabled(&edit, cmd::COPY));
     assert!(!enabled(&edit, cmd::CUT));
     assert!(!enabled(&edit, cmd::PASTE));
+}
+
+#[test]
+fn clipboard_and_select_all_are_greyed_in_the_rendered_view() {
+    let edit = items(EDIT, &State { rendered: true, read_only: true, ..state() });
+    for id in [cmd::CUT, cmd::COPY, cmd::PASTE, cmd::SELECT_ALL] {
+        assert!(!enabled(&edit, id), "{id}");
+    }
 }
 
 #[test]

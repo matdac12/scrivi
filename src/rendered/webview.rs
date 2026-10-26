@@ -16,6 +16,7 @@
 
 use std::cell::{Cell, RefCell};
 use std::collections::hash_map::DefaultHasher;
+use std::collections::VecDeque;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -29,9 +30,9 @@ use webview2_com::{
 use windows::core::{Interface, HSTRING, PCWSTR, PWSTR};
 use windows::Win32::Foundation::{HWND, LPARAM, RECT, WPARAM};
 use windows::Win32::System::Com::{CoInitializeEx, CoTaskMemFree, COINIT_APARTMENTTHREADED};
-use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, VK_CONTROL, VK_ESCAPE, VK_MENU, VK_SHIFT};
+use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, VK_CONTROL, VK_ESCAPE, VK_F10, VK_MENU, VK_SHIFT};
 use windows::Win32::UI::Shell::{FOLDERID_Documents, SHGetKnownFolderPath, KF_FLAG_DEFAULT};
-use windows::Win32::UI::WindowsAndMessaging::{PostMessageW, ACCEL, FALT, FCONTROL, FSHIFT, FVIRTKEY, WM_COMMAND};
+use windows::Win32::UI::WindowsAndMessaging::{PostMessageW, ACCEL, FALT, FCONTROL, FSHIFT, FVIRTKEY, SC_KEYMENU, WM_COMMAND, WM_SYSCOMMAND};
 
 use super::{Page, HOST};
 use crate::proto::{WM_RENDERED_FAILED, WM_RENDERED_LINK, WM_RENDERED_SHOWN};
@@ -253,7 +254,8 @@ fn set_visible(live: &Live, visible: bool) {
 
 fn navigate(live: &Live, page: &Page, key: u64, hwnd: HWND) {
     unsafe {
-        if live.root.as_deref() != Some(page.root.as_path()) {
+        // An empty root (no Documents folder) maps nothing: no local images.
+        if live.root.as_deref() != Some(page.root.as_path()) && !page.root.as_os_str().is_empty() {
             if let Ok(wv3) = live.webview.cast::<ICoreWebView2_3>() {
                 let _ = wv3.ClearVirtualHostNameToFolderMapping(&HSTRING::from(HOST));
                 let _ = wv3.SetVirtualHostNameToFolderMapping(
@@ -462,17 +464,40 @@ unsafe fn configure(
             webview.add_NewWindowRequested(&handler, &mut token)?;
         }
         {
+            let alt_alone = Cell::new(false);
             let handler = AcceleratorKeyPressedEventHandler::create(Box::new(move |_, args| {
                 let Some(args) = args else { return Ok(()) };
                 let mut kind = COREWEBVIEW2_KEY_EVENT_KIND::default();
                 args.KeyEventKind(&mut kind)?;
-                if kind != COREWEBVIEW2_KEY_EVENT_KIND_KEY_DOWN && kind != COREWEBVIEW2_KEY_EVENT_KIND_SYSTEM_KEY_DOWN {
+                let is_down = kind == COREWEBVIEW2_KEY_EVENT_KIND_KEY_DOWN || kind == COREWEBVIEW2_KEY_EVENT_KIND_SYSTEM_KEY_DOWN;
+                let is_up = kind == COREWEBVIEW2_KEY_EVENT_KIND_KEY_UP || kind == COREWEBVIEW2_KEY_EVENT_KIND_SYSTEM_KEY_UP;
+                if !is_down && !is_up {
                     return Ok(());
                 }
                 let mut vk = 0u32;
                 args.VirtualKey(&mut vk)?;
+                // The page swallows Alt and F10, which never reach the
+                // Window's WM_SYSCOMMAND: hand them to the custom menu bar.
+                if vk == VK_MENU.0 as u32 {
+                    if is_down {
+                        alt_alone.set(true);
+                    } else if alt_alone.replace(false) {
+                        args.SetHandled(true)?;
+                        post(hwnd, WM_SYSCOMMAND, SC_KEYMENU as usize, 0);
+                    }
+                    return Ok(());
+                }
+                if !is_down {
+                    return Ok(());
+                }
+                alt_alone.set(false);
                 let down = |k: u16| GetKeyState(k as i32) < 0;
                 let pressed = Pressed { vk, ctrl: down(VK_CONTROL.0), shift: down(VK_SHIFT.0), alt: down(VK_MENU.0) };
+                if let Some(ch) = menu_key(pressed) {
+                    args.SetHandled(true)?;
+                    post(hwnd, WM_SYSCOMMAND, SC_KEYMENU as usize, ch);
+                    return Ok(());
+                }
                 let Some(command) = command_for(&keys, esc, pressed) else { return Ok(()) };
                 args.SetHandled(true)?;
                 let mut status = COREWEBVIEW2_PHYSICAL_KEY_STATUS::default();
@@ -496,6 +521,19 @@ pub struct Pressed {
     pub ctrl: bool,
     pub shift: bool,
     pub alt: bool,
+}
+
+/// `WM_SYSCOMMAND`'s `SC_KEYMENU` character for a key that opens the menu bar:
+/// F10 (0, the bar highlighted) or Alt with a menu's access key.
+pub fn menu_key(p: Pressed) -> Option<isize> {
+    if p.ctrl || p.shift {
+        return None;
+    }
+    if p.vk == VK_F10.0 as u32 && !p.alt {
+        return Some(0);
+    }
+    let c = char::from_u32(p.vk).filter(char::is_ascii_alphabetic)?;
+    (p.alt && matches!(c.to_ascii_lowercase(), 'f' | 'e' | 'v')).then(|| c.to_ascii_lowercase() as isize)
 }
 
 /// The Window command a key runs: Esc goes back to the Source view, the rest
@@ -522,14 +560,21 @@ pub fn command_for(keys: &[ACCEL], esc: u16, p: Pressed) -> Option<u16> {
 /// it once this handler has returned.
 fn open_outside(hwnd: HWND, uri: &str) {
     if super::opens_outside(uri) {
-        let raw = Box::into_raw(Box::new(uri.to_string()));
-        unsafe {
-            if PostMessageW(Some(hwnd), WM_RENDERED_LINK, WPARAM(0), LPARAM(raw as isize)).is_err() {
-                // Never delivered: nothing else will free it.
-                drop(Box::from_raw(raw));
-            }
-        }
+        // The link waits in a queue only the UI thread reads; the message
+        // carries no pointer, so a stray one from another process is a no-op.
+        LINKS.with(|q| q.borrow_mut().push_back(uri.to_string()));
+        post(hwnd, WM_RENDERED_LINK, 0, 0);
     }
+}
+
+thread_local! {
+    static LINKS: RefCell<VecDeque<String>> = const { RefCell::new(VecDeque::new()) };
+}
+
+/// The links waiting for `WM_RENDERED_LINK`'s handler, oldest first. Empty
+/// when the message was not ours.
+pub fn take_links() -> Vec<String> {
+    LINKS.with(|q| q.borrow_mut().drain(..).collect())
 }
 
 /// The user's Documents folder, where an Untitled tab's images resolve.
@@ -552,8 +597,31 @@ pub fn folder_for(path: Option<&Path>) -> PathBuf {
 }
 
 #[cfg(test)]
+mod link_queue_tests {
+    use super::*;
+
+    #[test]
+    fn a_link_message_with_nothing_queued_is_a_no_op() {
+        assert!(take_links().is_empty());
+        LINKS.with(|q| q.borrow_mut().push_back("https://a.example".into()));
+        assert_eq!(take_links(), ["https://a.example"]);
+        assert!(take_links().is_empty());
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn f10_and_alt_with_an_access_key_reach_the_menu_bar() {
+        let key = |vk: u32, alt: bool| Pressed { vk, ctrl: false, shift: false, alt };
+        assert_eq!(menu_key(key(VK_F10.0 as u32, false)), Some(0));
+        assert_eq!(menu_key(key(b'F' as u32, true)), Some('f' as isize));
+        assert_eq!(menu_key(key(b'V' as u32, true)), Some('v' as isize));
+        assert_eq!(menu_key(key(b'Z' as u32, true)), None);
+        assert_eq!(menu_key(key(b'F' as u32, false)), None);
+    }
 
     const NEXT: u16 = 102;
     const PREV: u16 = 103;

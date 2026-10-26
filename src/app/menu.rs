@@ -36,6 +36,8 @@ pub struct State {
     pub can_paste: bool,
     /// A Markdown file or Untitled tab: Ctrl+E applies (13).
     pub markdown: bool,
+    /// The Rendered view shows: the hidden source is not the user's to edit.
+    pub rendered: bool,
 }
 
 /// One line of a popup, ready to show.
@@ -86,10 +88,10 @@ pub const EDIT: &[Entry] = &[
     Entry::Command { label: "&Undo", keys: "Ctrl+Z", id: cmd::UNDO, enabled: |s| s.can_undo },
     Entry::Command { label: "&Redo", keys: "Ctrl+Y", id: cmd::REDO, enabled: |s| s.can_redo },
     Entry::Separator,
-    Entry::Command { label: "Cu&t", keys: "Ctrl+X", id: cmd::CUT, enabled: |s| s.selection && !s.read_only },
-    Entry::Command { label: "&Copy", keys: "Ctrl+C", id: cmd::COPY, enabled: |s| s.selection },
-    Entry::Command { label: "&Paste", keys: "Ctrl+V", id: cmd::PASTE, enabled: |s| s.can_paste && !s.read_only },
-    Entry::Command { label: "Select &all", keys: "Ctrl+A", id: cmd::SELECT_ALL, enabled: always },
+    Entry::Command { label: "Cu&t", keys: "Ctrl+X", id: cmd::CUT, enabled: |s| s.selection && !s.read_only && !s.rendered },
+    Entry::Command { label: "&Copy", keys: "Ctrl+C", id: cmd::COPY, enabled: |s| s.selection && !s.rendered },
+    Entry::Command { label: "&Paste", keys: "Ctrl+V", id: cmd::PASTE, enabled: |s| s.can_paste && !s.read_only && !s.rendered },
+    Entry::Command { label: "Select &all", keys: "Ctrl+A", id: cmd::SELECT_ALL, enabled: |s| !s.rendered },
     Entry::Separator,
     Entry::Command { label: "&Find\u{2026}", keys: "Ctrl+F", id: cmd::FIND, enabled: later },
     Entry::Command { label: "R&eplace\u{2026}", keys: "Ctrl+H", id: cmd::REPLACE, enabled: later },
@@ -658,11 +660,12 @@ fn state_of(a: &App) -> State {
         tabs.active().and_then(|id| tabs.get(id)).map(|t| {
             // The Rendered view is read-only too (13).
             let read_only = t.read_only() || t.view() == crate::tabs::View::Rendered;
-            (t.encoding(), t.eol(), read_only, t.is_untitled(), t.kind() == crate::tabs::Kind::Markdown)
+            let rendered = t.view() == crate::tabs::View::Rendered;
+            (t.encoding(), t.eol(), read_only, t.is_untitled(), t.kind() == crate::tabs::Kind::Markdown, rendered)
         })
     };
-    let (encoding, eol, read_only, untitled, markdown) =
-        tab.unwrap_or((NEW_FILE.0, NEW_FILE.1, false, true, true));
+    let (encoding, eol, read_only, untitled, markdown, rendered) =
+        tab.unwrap_or((NEW_FILE.0, NEW_FILE.1, false, true, true, false));
     let ask = |msg| editor_call(a, msg) != 0;
     State {
         encoding,
@@ -674,6 +677,7 @@ fn state_of(a: &App) -> State {
         selection: !ask(sci::SCI_GETSELECTIONEMPTY),
         can_paste: ask(sci::SCI_CANPASTE),
         markdown,
+        rendered,
     }
 }
 
