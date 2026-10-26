@@ -13,6 +13,7 @@ fn state() -> State {
         can_redo: true,
         selection: true,
         can_paste: true,
+        markdown: true,
     }
 }
 

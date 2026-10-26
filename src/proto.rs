@@ -68,6 +68,17 @@ pub const WM_EDITOR_DPI: u32 = WM_APP + 1;
 /// is a `Box<launch::Request>` from `Box::into_raw`.
 pub const WM_HANDOFF: u32 = WM_APP + 2;
 
+// 13, the Rendered view, posts from WebView2's handlers: numbers from 0x130.
+
+/// The Rendered view's page has loaded: `rendered::webview::reveal` shows it.
+pub const WM_RENDERED_SHOWN: u32 = WM_APP + 0x130;
+/// A link clicked in the Rendered view; `LPARAM` is a `Box<String>` URI from
+/// `Box::into_raw`, already checked by `rendered::opens_outside`.
+pub const WM_RENDERED_LINK: u32 = WM_APP + 0x131;
+/// WebView2 couldn't start or show the page; `WPARAM` is
+/// `rendered::webview::FAILED_TO_START` or `FAILED_TOO_LARGE`.
+pub const WM_RENDERED_FAILED: u32 = WM_APP + 0x132;
+
 #[cfg(test)]
 mod tests {
     use super::name;
@@ -82,7 +93,13 @@ mod tests {
 
     #[test]
     fn message_numbers_are_distinct() {
-        let all = [super::WM_EDITOR_DPI, super::WM_HANDOFF];
+        let all = [
+            super::WM_EDITOR_DPI,
+            super::WM_HANDOFF,
+            super::WM_RENDERED_SHOWN,
+            super::WM_RENDERED_LINK,
+            super::WM_RENDERED_FAILED,
+        ];
         for (i, a) in all.iter().enumerate() {
             assert!(all[i + 1..].iter().all(|b| a != b), "{a:#x} used twice");
         }
