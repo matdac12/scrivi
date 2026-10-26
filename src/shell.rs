@@ -165,6 +165,19 @@ pub fn remove(prefix: &str, plan: &[PlanEntry]) -> Result<(), String> {
     Ok(())
 }
 
+/// Debug builds only: `SCRIVI_TEST_REGISTRY_PREFIX` redirects --register and
+/// --unregister to a throwaway HKCU subtree and skips Explorer and Settings.
+/// Release builds ignore the variable.
+#[cfg(debug_assertions)]
+fn test_prefix() -> Option<String> {
+    std::env::var("SCRIVI_TEST_REGISTRY_PREFIX").ok().filter(|p| !p.is_empty())
+}
+
+#[cfg(not(debug_assertions))]
+fn test_prefix() -> Option<String> {
+    None
+}
+
 /// `--register`: write the plan for the running exe, tell Explorer, then open
 /// the Default apps page where the user picks scrivi once.
 pub fn register() -> i32 {
@@ -172,6 +185,12 @@ pub fn register() -> i32 {
         Ok(p) => p,
         Err(e) => return fail(&format!("cannot find scrivi.exe: {e}")),
     };
+    if let Some(prefix) = test_prefix() {
+        return match apply(&prefix, &registry_plan(&exe)) {
+            Ok(()) => 0,
+            Err(e) => fail(&e),
+        };
+    }
     if let Err(e) = apply("", &registry_plan(&exe)) {
         return fail(&e);
     }
@@ -192,6 +211,12 @@ pub fn register() -> i32 {
 /// `--unregister`: remove exactly what `--register` wrote.
 pub fn unregister() -> i32 {
     let exe = std::env::current_exe().unwrap_or_default();
+    if let Some(prefix) = test_prefix() {
+        return match remove(&prefix, &registry_plan(&exe)) {
+            Ok(()) => 0,
+            Err(e) => fail(&e),
+        };
+    }
     if let Err(e) = remove("", &registry_plan(&exe)) {
         return fail(&e);
     }

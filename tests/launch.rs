@@ -90,6 +90,30 @@ fn temp_dir(test: &str) -> PathBuf {
     dir
 }
 
+#[cfg(debug_assertions)]
+fn key_exists(subkey: &str) -> bool {
+    use windows::Win32::System::Registry::{RegCloseKey, RegOpenKeyExW, HKEY, HKEY_CURRENT_USER, KEY_READ};
+    let k: Vec<u16> = subkey.encode_utf16().chain(std::iter::once(0)).collect();
+    unsafe {
+        let mut h = HKEY::default();
+        let ok = RegOpenKeyExW(HKEY_CURRENT_USER, PCWSTR(k.as_ptr()), None, KEY_READ, &mut h).is_ok();
+        if ok {
+            let _ = RegCloseKey(h);
+        }
+        ok
+    }
+}
+
+#[cfg(debug_assertions)]
+fn delete_tree(subkey: &str) {
+    use windows::Win32::System::Registry::{RegDeleteKeyW, RegDeleteTreeW, HKEY_CURRENT_USER};
+    let k: Vec<u16> = subkey.encode_utf16().chain(std::iter::once(0)).collect();
+    unsafe {
+        let _ = RegDeleteTreeW(HKEY_CURRENT_USER, PCWSTR(k.as_ptr()));
+        let _ = RegDeleteKeyW(HKEY_CURRENT_USER, PCWSTR(k.as_ptr()));
+    }
+}
+
 #[test]
 fn launch_lifecycle() {
     let me = Instance::new("lifecycle");
@@ -100,8 +124,26 @@ fn launch_lifecycle() {
     let log = dir.join("requests.log");
 
     // --register / --unregister with no resident: exit 0, nothing started.
-    assert!(scrivi(&log, &["--register"]).status().unwrap().success());
-    assert!(scrivi(&log, &["--unregister"]).status().unwrap().success());
+    // Only ever under a throwaway prefix (debug builds); the real registry is never touched.
+    #[cfg(debug_assertions)]
+    {
+        let prefix = format!(
+            r"Software\ScriviTest-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().subsec_nanos()
+        );
+        let prog = format!(r"{prefix}\Software\Classes\Scrivi.TextFile");
+        let run = |arg: &str| {
+            let mut c = scrivi(&log, &[arg]);
+            c.env("SCRIVI_TEST_REGISTRY_PREFIX", &prefix);
+            c.status().unwrap().success()
+        };
+        let registered = run("--register") && key_exists(&prog);
+        let removed = run("--unregister") && !key_exists(&prog);
+        delete_tree(&prefix);
+        assert!(registered, "--register did not write the ProgID under the prefix");
+        assert!(removed, "--unregister left the ProgID under the prefix");
+    }
     assert!(find().is_none());
 
     // A first launch with a path becomes the resident and applies the path.
