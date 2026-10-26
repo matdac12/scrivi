@@ -7,7 +7,7 @@ use std::cell::{Cell, OnceCell};
 use std::path::Path;
 
 use windows::core::{w, PCWSTR};
-use windows::Win32::Foundation::{LPARAM, LRESULT, RECT, WPARAM};
+use windows::Win32::Foundation::{LRESULT, RECT, WPARAM};
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetFocus, SetFocus};
 use windows::Win32::UI::Shell::ShellExecuteW;
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -160,7 +160,7 @@ pub(super) fn refocus(a: &App) {
 }
 
 /// The messages `rendered::webview` posts from WebView2's handlers.
-pub(super) unsafe fn on_rendered(a: &App, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
+pub(super) unsafe fn on_rendered(a: &App, msg: u32, wp: WPARAM) -> LRESULT {
     unsafe {
         match msg {
             WM_RENDERED_SHOWN => {
@@ -168,11 +168,12 @@ pub(super) unsafe fn on_rendered(a: &App, msg: u32, wp: WPARAM, lp: LPARAM) -> L
                 cover_editor(a);
             }
             WM_RENDERED_LINK => {
-                let uri = Box::from_raw(lp.0 as *mut String);
-                // Checked again here: only web and mail links leave scrivi.
-                if rendered::opens_outside(&uri) {
-                    let uri = wide(&uri);
-                    ShellExecuteW(Some(a.hwnd), w!("open"), PCWSTR(uri.as_ptr()), None, None, SW_SHOWNORMAL);
+                for uri in webview::take_links() {
+                    // Checked again here: only web and mail links leave scrivi.
+                    if rendered::opens_outside(&uri) {
+                        let uri = wide(&uri);
+                        ShellExecuteW(Some(a.hwnd), w!("open"), PCWSTR(uri.as_ptr()), None, None, SW_SHOWNORMAL);
+                    }
                 }
             }
             _ => {

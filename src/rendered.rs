@@ -2,6 +2,7 @@
 
 pub mod webview;
 
+use std::collections::{HashMap, HashSet};
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -126,7 +127,8 @@ const ALIGNMENTS: [&str; 3] = ["text-align: left", "text-align: center", "text-a
 /// its text in lower case, punctuation dropped, spaces as `-`, and `-1`,
 /// `-2`, ... on repeats.
 fn name_headings(events: &mut [Event]) {
-    let mut used: Vec<String> = Vec::new();
+    let mut used: HashSet<String> = HashSet::new();
+    let mut next_suffix: HashMap<String, usize> = HashMap::new();
     let mut i = 0;
     while i < events.len() {
         if !matches!(events[i], Event::Start(Tag::Heading { id: None, .. })) {
@@ -147,11 +149,14 @@ fn name_headings(events: &mut [Event]) {
             .filter(|c| c.is_alphanumeric() || matches!(c, ' ' | '-' | '_'))
             .map(|c| if c == ' ' { '-' } else { c })
             .collect();
-        let slug = (0..)
-            .map(|n| if n == 0 { base.clone() } else { format!("{base}-{n}") })
-            .find(|s| !used.contains(s))
-            .expect("some suffix is free");
-        used.push(slug.clone());
+        let next = next_suffix.entry(base.clone()).or_insert(0);
+        let slug = loop {
+            let candidate = if *next == 0 { base.clone() } else { format!("{base}-{next}") };
+            *next += 1;
+            if used.insert(candidate.clone()) {
+                break candidate;
+            }
+        };
         if let Event::Start(Tag::Heading { id, .. }) = &mut events[i] {
             *id = Some(CowStr::from(slug));
         }
@@ -367,6 +372,29 @@ mod tests {
         let html = body(&page("<td style=\"background:url(https://x)\">t</td>\n\n<input type=\"text\" value=\"v\">"));
         assert!(!html.contains("background"), "{html}");
         assert!(!html.contains("type=\"text\""), "{html}");
+    }
+
+    #[test]
+    fn ten_thousand_duplicate_headings_are_named_fast() {
+        let md = "# a
+".repeat(10_000);
+        let mut events: Vec<Event> = Parser::new(&md).collect();
+        let start = std::time::Instant::now();
+        name_headings(&mut events);
+        assert!(start.elapsed() < std::time::Duration::from_millis(100), "{:?}", start.elapsed());
+        let last = events.iter().rev().find_map(|e| match e {
+            Event::Start(Tag::Heading { id, .. }) => id.clone(),
+            _ => None,
+        });
+        assert_eq!(last.as_deref(), Some("a-9999"));
+    }
+
+    #[test]
+    fn duplicate_suffixes_skip_ids_already_taken() {
+        let html = page("# a\n\n# a\n\n# a-1\n\n# a\n\n# a-1\n");
+        for id in ["a", "a-1", "a-1-1", "a-2", "a-1-2"] {
+            assert!(html.contains(&format!(r#"<h1 id="{id}">"#)), "{id}: {html}");
+        }
     }
 
     #[test]

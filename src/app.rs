@@ -14,7 +14,7 @@
 //! if set, and keep the Window hidden then, so the launch tests stay headless.
 
 use std::cell::{Cell, OnceCell, RefCell};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::io::Read;
 #[cfg(debug_assertions)]
 use std::io::Write;
@@ -401,6 +401,17 @@ unsafe fn place(hwnd: HWND) {
         let y = work.top + (work.bottom - work.top - h) / 2;
         let _ = SetWindowPos(hwnd, None, x, y, w, h, SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
     }
+}
+
+thread_local! {
+    /// Requests from later launches, waiting for `WM_HANDOFF`. Only the UI
+    /// thread touches it, so the message carries no pointer.
+    static HANDOFFS: RefCell<VecDeque<Request>> = const { RefCell::new(VecDeque::new()) };
+}
+
+/// The queued requests, oldest first; empty when `WM_HANDOFF` was not ours.
+fn take_handoffs() -> Vec<Request> {
+    HANDOFFS.with(|q| q.borrow_mut().drain(..).collect())
 }
 
 /// A request from this launch (`run`'s `initial`) or a later one (`WM_HANDOFF`).
@@ -1463,8 +1474,8 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                 };
                 // Answer the waiting launch at once; files load (and any
                 // dialog shows) once it has gone.
-                let request = Box::new(launch::decode(payload));
-                let _ = PostMessageW(Some(hwnd), WM_HANDOFF, WPARAM(0), LPARAM(Box::into_raw(request) as isize));
+                HANDOFFS.with(|q| q.borrow_mut().push_back(launch::decode(payload)));
+                let _ = PostMessageW(Some(hwnd), WM_HANDOFF, WPARAM(0), LPARAM(0));
                 if IsIconic(hwnd).as_bool() {
                     let _ = ShowWindow(hwnd, SW_RESTORE);
                 }
@@ -1472,8 +1483,9 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                 LRESULT(1)
             }
             WM_HANDOFF => {
-                let request = Box::from_raw(lp.0 as *mut Request);
-                on_handoff(*request);
+                for request in take_handoffs() {
+                    on_handoff(request);
+                }
                 LRESULT(0)
             }
             // Alt or F10 alone, and Alt+F, E or V: the menu bar (SCRIVI-16).
@@ -1496,7 +1508,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                 files::dropped(a, windows::Win32::UI::Shell::HDROP(wp.0 as *mut _));
                 LRESULT(0)
             }
-            WM_RENDERED_SHOWN | WM_RENDERED_LINK | WM_RENDERED_FAILED => on_rendered(a, msg, wp, lp),
+            WM_RENDERED_SHOWN | WM_RENDERED_LINK | WM_RENDERED_FAILED => on_rendered(a, msg, wp),
             WM_DESTROY => {
                 recent::flush(hwnd);
                 webview::close();
@@ -1505,6 +1517,14 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             }
             _ => DefWindowProcW(hwnd, msg, wp, lp),
         }
+    }
+}
+
+#[cfg(test)]
+mod handoff_tests {
+    #[test]
+    fn a_handoff_message_with_no_queued_request_is_a_no_op() {
+        assert!(super::take_handoffs().is_empty());
     }
 }
 

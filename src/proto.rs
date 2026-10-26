@@ -67,15 +67,15 @@ pub const TIMER_PREFS: usize = 0x20;
 /// arrives, so the editor can re-measure its pixel sizes.
 pub const WM_EDITOR_DPI: u32 = WM_APP + 1;
 /// Posted from `WM_COPYDATA` so the launch gets its answer at once; `LPARAM`
-/// is a `Box<launch::Request>` from `Box::into_raw`.
+/// carries nothing: the request waits in a queue on the UI thread.
 pub const WM_HANDOFF: u32 = WM_APP + 2;
 
 // 13, the Rendered view, posts from WebView2's handlers: numbers from 0x130.
 
 /// The Rendered view's page has loaded: `rendered::webview::reveal` shows it.
 pub const WM_RENDERED_SHOWN: u32 = WM_APP + 0x130;
-/// A link clicked in the Rendered view; `LPARAM` is a `Box<String>` URI from
-/// `Box::into_raw`, already checked by `rendered::opens_outside`.
+/// A link clicked in the Rendered view; carries nothing: the URI waits in
+/// `rendered::webview`'s queue, checked again by `rendered::opens_outside`.
 pub const WM_RENDERED_LINK: u32 = WM_APP + 0x131;
 /// WebView2 couldn't start or show the page; `WPARAM` is
 /// `rendered::webview::FAILED_TO_START` or `FAILED_TOO_LARGE`.
