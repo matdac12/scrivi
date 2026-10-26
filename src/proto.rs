@@ -18,12 +18,15 @@ pub const COPYDATA_REQUEST: usize = 0x5343_5231;
 /// Posted from `WM_DPICHANGED`: Scintilla has seen the new DPI by the time it
 /// arrives, so the editor can re-measure its pixel sizes.
 pub const WM_EDITOR_DPI: u32 = WM_APP + 1;
+/// Posted from `WM_COPYDATA` so the launch gets its answer at once; `LPARAM`
+/// is a `Box<launch::Request>` from `Box::into_raw`.
+pub const WM_HANDOFF: u32 = WM_APP + 2;
 
 #[cfg(test)]
 mod tests {
     #[test]
     fn message_numbers_are_distinct() {
-        let all = [super::WM_EDITOR_DPI];
+        let all = [super::WM_EDITOR_DPI, super::WM_HANDOFF];
         for (i, a) in all.iter().enumerate() {
             assert!(all[i + 1..].iter().all(|b| a != b), "{a:#x} used twice");
         }

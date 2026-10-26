@@ -10,7 +10,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 
 use crate::chrome::Rect;
-use crate::textfile::{self, Encoding, Eol};
+use crate::textfile::Eol;
 
 #[link(name = "scintilla", kind = "static")]
 extern "C" {
@@ -29,9 +29,12 @@ pub mod sci {
     pub const SCI_CLEARALL: u32 = 2004;
     pub const SCI_GETLENGTH: u32 = 2006;
     pub const SCI_GETCURRENTPOS: u32 = 2008;
+    pub const SCI_GETANCHOR: u32 = 2009;
     pub const SCI_SETUNDOCOLLECTION: u32 = 2012;
     pub const SCI_SETSAVEPOINT: u32 = 2014;
     pub const SCI_GOTOPOS: u32 = 2025;
+    pub const SCI_SETANCHOR: u32 = 2026;
+    pub const SCI_CONVERTEOLS: u32 = 2029;
     pub const SCI_SETEOLMODE: u32 = 2031;
     pub const SCI_STARTSTYLING: u32 = 2032;
     pub const SCI_SETBUFFEREDDRAW: u32 = 2035;
@@ -50,6 +53,8 @@ pub mod sci {
     pub const SCI_INDICSETFORE: u32 = 2082;
     pub const SCI_SETCARETLINEVISIBLE: u32 = 2096;
     pub const SCI_SETHSCROLLBAR: u32 = 2130;
+    pub const SCI_SETCURRENTPOS: u32 = 2141;
+    pub const SCI_GETFIRSTVISIBLELINE: u32 = 2152;
     pub const SCI_GETLINECOUNT: u32 = 2154;
     pub const SCI_SETMARGINLEFT: u32 = 2155;
     pub const SCI_SETMARGINRIGHT: u32 = 2157;
@@ -61,17 +66,22 @@ pub mod sci {
     pub const SCI_GETDIRECTFUNCTION: u32 = 2184;
     pub const SCI_GETDIRECTPOINTER: u32 = 2185;
     pub const SCI_SETCARETWIDTH: u32 = 2188;
+    pub const SCI_VISIBLEFROMDOCLINE: u32 = 2220;
+    pub const SCI_DOCLINEFROMVISIBLE: u32 = 2221;
     pub const SCI_SETMARGINTYPEN: u32 = 2240;
     pub const SCI_SETMARGINWIDTHN: u32 = 2242;
     pub const SCI_SETWRAPMODE: u32 = 2268;
     pub const SCI_SETSCROLLWIDTH: u32 = 2274;
     pub const SCI_TEXTWIDTH: u32 = 2276;
     pub const SCI_APPENDTEXT: u32 = 2282;
+    pub const SCI_GETDOCPOINTER: u32 = 2357;
     pub const SCI_SETDOCPOINTER: u32 = 2358;
     pub const SCI_SETMODEVENTMASK: u32 = 2359;
     pub const SCI_GETZOOM: u32 = 2374;
     pub const SCI_CREATEDOCUMENT: u32 = 2375;
     pub const SCI_RELEASEDOCUMENT: u32 = 2377;
+    pub const SCI_SETXOFFSET: u32 = 2397;
+    pub const SCI_GETXOFFSET: u32 = 2398;
     pub const SCI_ALLOCATE: u32 = 2446;
     pub const SCI_SETWRAPINDENTMODE: u32 = 2472;
     pub const SCI_SETINDICATORCURRENT: u32 = 2500;
@@ -90,6 +100,7 @@ pub mod sci {
     pub const SCI_SETCARETLINELAYER: u32 = 2765;
     pub const SCI_SETLAYOUTTHREADS: u32 = 2775;
     pub const SCI_SETCHANGEHISTORY: u32 = 2780;
+    pub const SCI_SCROLLVERTICAL: u32 = 2817;
 
     pub const STYLE_DEFAULT: usize = 32;
     pub const STYLE_LINENUMBER: usize = 33;
@@ -112,6 +123,7 @@ pub mod sci {
     pub const SC_MOD_INSERTTEXT: i32 = 0x1;
     pub const SC_MOD_DELETETEXT: i32 = 0x2;
     pub const INDIC_STRIKE: isize = 4;
+    pub const SC_MOD_EDITS: usize = (SC_MOD_INSERTTEXT | SC_MOD_DELETETEXT) as usize;
     pub const SCN_STYLENEEDED: u32 = 2000;
     pub const SCN_UPDATEUI: u32 = 2007;
     pub const SCN_MODIFIED: u32 = 2008;
@@ -162,6 +174,27 @@ pub struct Editor {
     hwnd: HWND,
     func: SciFnDirect,
     ptr: isize,
+}
+
+/// What a Tab's document looked like in the view, kept while another Tab shows.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ViewState {
+    pub anchor: isize,
+    pub caret: isize,
+    /// 0-based; a reload puts the caret back on it (spec §8).
+    pub caret_line: isize,
+    /// The document line at the top, and how many of its wrapped lines are above the view.
+    pub top_line: isize,
+    pub sub_line: isize,
+    pub x_offset: isize,
+}
+
+fn eol_mode(eol: Eol) -> usize {
+    match eol {
+        Eol::Lf => SC_EOL_LF,
+        Eol::Crlf => SC_EOL_CRLF,
+        Eol::Cr => SC_EOL_CR,
+    }
 }
 
 /// Where the caret is, for the status bar.
@@ -230,7 +263,8 @@ impl Editor {
         self.call(SCI_SETTABWIDTH, 4, 0);
         let threads = std::thread::available_parallelism().map_or(1, |n| n.get());
         self.call(SCI_SETLAYOUTTHREADS, threads, 0);
-        self.call(SCI_SETMODEVENTMASK, 0, 0);
+        // SCN_MODIFIED for text edits only: they mark the Tab unsaved.
+        self.call(SCI_SETMODEVENTMASK, SC_MOD_EDITS, 0);
 
         self.call_str(SCI_STYLESETFONT, STYLE_DEFAULT, FONT);
         self.call(SCI_STYLESETSIZEFRACTIONAL, STYLE_DEFAULT, FONT_SIZE);
@@ -286,21 +320,26 @@ impl Editor {
         self.call(SCI_SETMARGINWIDTHN, 0, w + scale(24.0, dpi));
     }
 
-    /// Replace the text with `bytes`, unmodified, caret at the start. Until 08
-    /// every file is read as UTF-8; returns what was found.
-    pub fn load_utf8(&self, bytes: &[u8]) -> (Encoding, Eol) {
-        let (bytes, encoding) = match bytes.strip_prefix(b"\xEF\xBB\xBF") {
-            Some(rest) => (rest, Encoding::Utf8Bom),
-            None => (bytes, Encoding::Utf8),
-        };
-        let text = String::from_utf8_lossy(bytes);
-        let eol = textfile::detect_eol(&text);
-        let mode = match eol {
-            Eol::Lf => SC_EOL_LF,
-            Eol::Crlf => SC_EOL_CRLF,
-            Eol::Cr => SC_EOL_CR,
-        };
-        self.call(SCI_SETEOLMODE, mode, 0);
+    /// A new empty document, owned by the caller until `release_document`.
+    /// A Large file's has no styles and allows over 2 GB (spec §7).
+    pub fn create_document(&self, large: bool) -> isize {
+        let options = if large { SC_DOCUMENTOPTION_STYLES_NONE | SC_DOCUMENTOPTION_TEXT_LARGE } else { 0 };
+        self.call(SCI_CREATEDOCUMENT, 0, options)
+    }
+
+    /// Drop the caller's hold on `doc`; the control keeps its own while it shows it.
+    pub fn release_document(&self, doc: isize) {
+        self.call(SCI_RELEASEDOCUMENT, 0, doc);
+    }
+
+    /// Show `doc`. The caret goes to the start and the view to the top.
+    pub fn show_document(&self, doc: isize) {
+        self.call(SCI_SETDOCPOINTER, 0, doc);
+    }
+
+    /// Replace the shown document's text with `text`, without undo history,
+    /// unmodified (spec §7: allocate once, undo collection off).
+    pub fn fill(&self, text: &str) {
         self.call(SCI_SETUNDOCOLLECTION, 0, 0);
         self.call(SCI_CLEARALL, 0, 0);
         self.call(SCI_ALLOCATE, text.len() + 1, 0);
@@ -308,13 +347,65 @@ impl Editor {
         self.call(SCI_SETUNDOCOLLECTION, 1, 0);
         self.call(SCI_EMPTYUNDOBUFFER, 0, 0);
         self.call(SCI_SETSAVEPOINT, 0, 0);
-        self.call(SCI_GOTOPOS, 0, 0);
-        (encoding, eol)
     }
 
-    /// Edited since the last load (Scintilla's save point).
-    pub fn is_modified(&self) -> bool {
-        self.call(SCI_GETMODIFY, 0, 0) != 0
+    /// The line ending typed by Enter in the shown document.
+    pub fn set_eol_mode(&self, eol: Eol) {
+        self.call(SCI_SETEOLMODE, eol_mode(eol), 0);
+    }
+
+    /// Convert every line ending of the shown document to `eol`.
+    pub fn convert_eols(&self, eol: Eol) {
+        self.set_eol_mode(eol);
+        self.call(SCI_CONVERTEOLS, eol_mode(eol), 0);
+    }
+
+    pub fn set_read_only(&self, read_only: bool) {
+        self.call(SCI_SETREADONLY, read_only as usize, 0);
+    }
+
+    pub fn set_wrap(&self, wrap: bool) {
+        self.call(SCI_SETWRAPMODE, if wrap { SC_WRAP_WORD } else { SC_WRAP_NONE }, 0);
+    }
+
+    /// Length of the shown document's text in bytes.
+    pub fn text_len(&self) -> usize {
+        self.call(SCI_GETLENGTH, 0, 0) as usize
+    }
+
+    /// Selection and scroll position of the shown document.
+    pub fn view_state(&self) -> ViewState {
+        let caret = self.call(SCI_GETCURRENTPOS, 0, 0);
+        let first = self.call(SCI_GETFIRSTVISIBLELINE, 0, 0);
+        let top_line = self.call(SCI_DOCLINEFROMVISIBLE, first as usize, 0);
+        ViewState {
+            anchor: self.call(SCI_GETANCHOR, 0, 0),
+            caret,
+            caret_line: self.call(SCI_LINEFROMPOSITION, caret as usize, 0),
+            top_line,
+            sub_line: first - self.call(SCI_VISIBLEFROMDOCLINE, top_line as usize, 0),
+            x_offset: self.call(SCI_GETXOFFSET, 0, 0),
+        }
+    }
+
+    /// Put back a `view_state` of the shown document. The scroll is kept by
+    /// document line, so it survives the text rewrapping after a swap.
+    pub fn restore_view(&self, v: &ViewState) {
+        self.call(SCI_SETCURRENTPOS, v.caret as usize, 0);
+        self.call(SCI_SETANCHOR, v.anchor as usize, 0);
+        // SCI_SCROLLVERTICAL keeps (line, sub-line) for after the rewrap a
+        // swap causes, but forgets it when its own scroll moves the top line
+        // (Editor::ScrollTo -> SetVerticalScrollPos). Asked again with the top
+        // line already there, nothing moves and the sub-line sticks.
+        self.call(SCI_SCROLLVERTICAL, v.top_line as usize, v.sub_line);
+        self.call(SCI_SCROLLVERTICAL, v.top_line as usize, v.sub_line);
+        self.call(SCI_SETXOFFSET, v.x_offset as usize, 0);
+    }
+
+    /// Start of `line` (0-based) of the shown document, or of its last line.
+    pub fn line_start(&self, line: isize) -> isize {
+        let last = self.call(SCI_GETLINECOUNT, 0, 0) - 1;
+        self.call(SCI_POSITIONFROMLINE, line.clamp(0, last.max(0)) as usize, 0)
     }
 
     pub fn caret(&self) -> Caret {

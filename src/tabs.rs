@@ -9,13 +9,13 @@
 //! Paths are compared the Windows way: case-insensitive, `/` same as `\`.
 //! `app` passes absolute paths.
 
-#![allow(dead_code)] // 07 wires this into the Window.
+#![allow(dead_code)] // 08 (saving, encodings), 11 (Disk changes) and 13 (Rendered view) call the rest.
 
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime};
 
 use crate::textfile;
-#[allow(unused_imports)] // re-exported for `app`; unused until 07 wires tabs in
+#[allow(unused_imports)] // re-exported for callers of `tabs`
 pub use crate::textfile::{Encoding, Eol, LARGE_FILE_BYTES};
 
 /// Over this many bytes of text a Markdown file loses styling, spell check
@@ -96,6 +96,18 @@ pub enum StatusNote {
     RenderedView,
     /// "Too large to render", after Ctrl+E on a Markdown file over 1 MB.
     TooLargeToRender,
+}
+
+impl StatusNote {
+    /// What the status bar's left slot says.
+    pub fn text(self) -> &'static str {
+        match self {
+            StatusNote::ReadOnly => "Read-only",
+            StatusNote::StylingOff => "Markdown styling off (over 1 MB)",
+            StatusNote::RenderedView => "Rendered view \u{b7} Esc to edit",
+            StatusNote::TooLargeToRender => "Too large to render",
+        }
+    }
 }
 
 /// A file's size and modified time, as `app` read them from disk.

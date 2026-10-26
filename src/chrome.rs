@@ -27,6 +27,8 @@ pub struct Frame {
     pub find_h: f32,
     /// Number of Tabs in the strip.
     pub tabs: usize,
+    /// How far the Tabs are scrolled left, in pixels; the layout clamps it.
+    pub tab_scroll: i32,
     /// Text widths of "File", "Edit", "View" in DIPs, measured by the painter.
     pub menu_text: [f32; 3],
     pub maximized: bool,
@@ -44,6 +46,7 @@ impl Default for Frame {
             notice_h: 0.0,
             find_h: 0.0,
             tabs: 1,
+            tab_scroll: 0,
             menu_text: [22.0, 22.0, 26.0],
             maximized: false,
             resize_border: 0,
@@ -73,12 +76,21 @@ pub struct Layout {
     pub tab_closes: Vec<Rect>,
     /// "+": a new Tab.
     pub plus: Rect,
+    /// ‹ and ›, after "+", when the Tabs overflow the strip.
+    pub scroll: Option<[Rect; 2]>,
+    /// `Frame::tab_scroll`, clamped so the strip is never scrolled past its Tabs.
+    pub tab_scroll: i32,
     /// Empty caption: drags the Window.
     pub drag: Rect,
     /// Minimise, maximise, close.
     pub buttons: [Rect; 3],
 
     pub maximized: bool,
+    scroll_max: i32,
+    /// How many whole Tabs the strip shows.
+    visible: usize,
+    /// A Tab's width plus the gap after it: one step of ‹ ›.
+    tab_pitch: i32,
     resize_border: i32,
     /// How far a corner reaches along each edge.
     corner: i32,
@@ -98,6 +110,9 @@ pub enum Hit {
     Tab(usize),
     TabClose(usize),
     NewTab,
+    /// ‹ and ›: scroll the Tabs.
+    ScrollLeft,
+    ScrollRight,
     Minimize,
     Maximize,
     Close,
@@ -130,7 +145,15 @@ impl Hit {
     pub fn lights_up(self) -> bool {
         matches!(
             self,
-            Hit::Menu(_) | Hit::Tab(_) | Hit::TabClose(_) | Hit::NewTab | Hit::Minimize | Hit::Maximize | Hit::Close
+            Hit::Menu(_)
+                | Hit::Tab(_)
+                | Hit::TabClose(_)
+                | Hit::NewTab
+                | Hit::ScrollLeft
+                | Hit::ScrollRight
+                | Hit::Minimize
+                | Hit::Maximize
+                | Hit::Close
         )
     }
 
@@ -202,6 +225,7 @@ const TAB_H: f32 = 31.0;
 const TAB_PAD_R: f32 = 10.0;
 const TAB_CLOSE: f32 = 18.0;
 const PLUS_W: f32 = 30.0;
+const SCROLL_BUTTON: f32 = 24.0;
 pub const DRAG_MIN: f32 = 48.0;
 const BUTTON_W: f32 = 46.0;
 
@@ -251,18 +275,29 @@ impl Layout {
         let divider = centred(div_l, div_l + f.px(1.0), ICON);
         let strip_l = divider.right + f.px(STRIP_GAP_L);
 
-        // Tabs share what is left once "+" and the drag area fit.
+        // Tabs share what is left once "+" and the drag area fit. Below
+        // TAB_MIN_W they overflow: ‹ › follow "+", as many whole Tabs as fit
+        // widen to fill the strip (up to TAB_W), and the strip scrolls a
+        // whole Tab at a time.
         let (gap, plus_w) = (f.px(GAP), f.px(PLUS_W));
-        let strip_max = (min_l - gap - f.px(DRAG_MIN) - gap - plus_w - gap).max(strip_l);
+        let fit_max = (min_l - gap - f.px(DRAG_MIN) - gap - plus_w - gap).max(strip_l);
         let n = f.tabs as i32;
-        let tab_w = if n == 0 {
-            0
+        let share = |room: i32| if n == 0 { 0 } else { ((room - (n - 1) * gap) / n).clamp(f.px(TAB_MIN_W), f.px(TAB_W)) };
+        let overflows = n * share(fit_max - strip_l) + (n - 1).max(0) * gap > fit_max - strip_l;
+        let (tab_w, visible) = if overflows {
+            let room = (fit_max - f.px(SCROLL_BUTTON) * 2 - gap - gap).max(strip_l) - strip_l;
+            let visible = ((room + gap) / (f.px(TAB_MIN_W) + gap)).max(1);
+            (((room - (visible - 1) * gap) / visible).clamp(0, f.px(TAB_W)), visible)
         } else {
-            ((strip_max - strip_l - (n - 1) * gap) / n).clamp(f.px(TAB_MIN_W), f.px(TAB_W))
+            (share(fit_max - strip_l), n)
         };
+        let pitch = tab_w + gap;
+        let first_max = (n - visible).max(0);
+        let first = if pitch > 0 { ((f.tab_scroll + pitch / 2).div_euclid(pitch)).clamp(0, first_max) } else { 0 };
+        let tab_scroll = first * pitch;
         let tab_t = title_b - f.px(1.0) - f.px(TAB_H);
-        let tabs: Vec<Rect> =
-            (0..n).map(|i| rect(strip_l + i * (tab_w + gap), tab_t, strip_l + i * (tab_w + gap) + tab_w, title_b)).collect();
+        let tab_l = |i: i32| strip_l - tab_scroll + i * pitch;
+        let tabs: Vec<Rect> = (0..n).map(|i| rect(tab_l(i), tab_t, tab_l(i) + tab_w, title_b)).collect();
         let tab_closes = tabs
             .iter()
             .map(|t| {
@@ -271,9 +306,15 @@ impl Layout {
                 rect(right - f.px(TAB_CLOSE), top, right, top + f.px(TAB_CLOSE))
             })
             .collect();
-        let strip_r = tabs.last().map_or(strip_l, |t| t.right).min(strip_max);
+        let strip_r = (strip_l + visible * pitch - gap).max(strip_l);
         let plus_l = strip_r + gap;
         let plus = rect(plus_l, tab_t, plus_l + plus_w, title_b - f.px(1.0));
+        let scroll = overflows.then(|| {
+            let (bw, top) = (f.px(SCROLL_BUTTON), tab_t + (f.px(TAB_H) - f.px(SCROLL_BUTTON)) / 2);
+            let left = plus.right + gap;
+            [rect(left, top, left + bw, top + bw), rect(left + bw + gap, top, left + 2 * bw + gap, top + bw)]
+        });
+        let drag_l = scroll.map_or(plus.right, |s| s[1].right);
 
         Layout {
             title: band(0, title_b),
@@ -288,7 +329,12 @@ impl Layout {
             tabs,
             tab_closes,
             plus,
-            drag: rect(plus.right, 0, min_l, title_b),
+            scroll,
+            tab_scroll,
+            scroll_max: first_max * pitch,
+            tab_pitch: pitch,
+            visible: visible as usize,
+            drag: rect(drag_l, 0, min_l, title_b),
             buttons,
             maximized: f.maximized,
             resize_border: f.resize_border,
@@ -324,6 +370,28 @@ impl Layout {
         Rect { left, top: s.top, right, bottom: s.bottom }
     }
 
+    /// The `tab_scroll` that shows Tab `i`, moving as little as possible.
+    pub fn reveal(&self, i: usize) -> i32 {
+        let first = (self.tab_scroll / self.tab_pitch.max(1)) as usize;
+        if i >= self.tabs.len() || (first..first + self.visible).contains(&i) {
+            self.tab_scroll
+        } else if i < first {
+            i as i32 * self.tab_pitch
+        } else {
+            (i + 1 - self.visible) as i32 * self.tab_pitch
+        }
+    }
+
+    /// The `tab_scroll` after ‹ (`-1`) or › (`1`): one Tab's width.
+    pub fn scroll_step(&self, dir: i32) -> i32 {
+        (self.tab_scroll + dir * self.tab_pitch).clamp(0, self.scroll_max)
+    }
+
+    /// Whether ‹ and › can still scroll.
+    pub fn can_scroll(&self) -> (bool, bool) {
+        (self.tab_scroll > 0, self.tab_scroll < self.scroll_max)
+    }
+
     pub fn hit_test(&self, x: i32, y: i32) -> Hit {
         let (w, h) = (self.status.right, self.status.bottom);
         let inside = x >= 0 && x < w && y >= 0 && y < h;
@@ -347,6 +415,14 @@ impl Layout {
             ];
             if let Some((_, hit)) = pieces.iter().find(|(r, _)| at(r)) {
                 return *hit;
+            }
+            if let Some([left, right]) = &self.scroll {
+                if at(left) {
+                    return Hit::ScrollLeft;
+                }
+                if at(right) {
+                    return Hit::ScrollRight;
+                }
             }
             if let Some(i) = self.menus.iter().position(at) {
                 return Hit::Menu(i);
@@ -441,14 +517,30 @@ mod tests {
     }
 
     #[test]
-    fn tabs_stop_shrinking_at_120_px_and_the_strip_clips_them() {
+    fn tabs_that_fit_show_no_scroll_buttons() {
+        let l = Layout::new(&row(4, 1000));
+        assert_eq!(l.scroll, None);
+    }
+
+    #[test]
+    fn past_120_px_whole_tabs_fill_the_strip_and_scroll_buttons_follow_the_plus() {
         let l = Layout::new(&row(8, 1000));
-        assert!(l.tabs.iter().all(|t| t.right - t.left == 120));
-        // The strip ends where the plus and a 48 px drag area still fit.
-        assert_eq!(l.strip, r(185, 0, 778, 42));
-        assert_eq!(l.plus.left, 780);
-        // 48 px plus the 2 px gaps either side.
-        assert_eq!(l.drag, r(810, 0, 862, 42));
+        // "+", ‹ › (24 px each, 2 px apart) and a 48 px drag area leave the
+        // Tabs 541 px: four of at least 120 px fit, widened to 133 px.
+        assert!(l.tabs.iter().all(|t| t.right - t.left == 133));
+        assert_eq!(l.strip, r(185, 0, 723, 42));
+        assert_eq!(l.plus, r(725, 10, 755, 41));
+        assert_eq!(l.scroll, Some([r(757, 13, 781, 37), r(783, 13, 807, 37)]));
+        assert_eq!(l.drag, r(807, 0, 862, 42));
+    }
+
+    #[test]
+    fn whole_tabs_never_grow_past_178_px() {
+        // 181 px of strip: one Tab in view, at its full width, not stretched.
+        let l = Layout::new(&row(3, 640));
+        assert!(l.tabs.iter().all(|t| t.right - t.left == 178));
+        assert_eq!(l.strip, r(185, 0, 363, 42));
+        assert_eq!(l.reveal(2), 360);
     }
 
     fn restored() -> Layout {
@@ -523,11 +615,78 @@ mod tests {
     }
 
     #[test]
-    fn a_clipped_tab_is_not_hit_past_the_strip() {
+    fn a_tab_past_the_strip_is_not_hit() {
         let l = Layout::new(&Frame { resize_border: 8, ..row(8, 1000) });
-        assert_eq!(l.hit_test(740, 25), Hit::Tab(4));
-        assert_eq!(l.hit_test(800, 25), Hit::NewTab);
+        // Tab 3 is the last whole one in the strip; tab 4 starts past it.
+        assert_eq!(l.hit_test(650, 25), Hit::Tab(3));
+        assert_eq!(l.hit_test(700, 25), Hit::TabClose(3));
+        assert_eq!(l.hit_test(740, 25), Hit::NewTab);
         assert_eq!(l.hit_test(830, 25), Hit::Caption);
+    }
+
+    #[test]
+    fn scrolling_moves_whole_tabs_and_hides_those_past_the_strip() {
+        let l = Layout::new(&Frame { resize_border: 8, tab_scroll: 135, ..row(8, 1000) });
+        assert_eq!(l.tab_scroll, 135);
+        assert_eq!(l.tabs[0], r(50, 10, 183, 42));
+        assert_eq!(l.tabs[1], r(185, 10, 318, 42));
+        // Tab 0 lies left of the strip, over the menus: never hit.
+        assert_eq!(l.hit_test(150, 25), Hit::Menu(2));
+        assert_eq!(l.hit_test(190, 25), Hit::Tab(1));
+    }
+
+    #[test]
+    fn the_scroll_offset_snaps_to_whole_tabs_and_stops_at_either_end() {
+        // A Tab and its gap: 135 px. Eight Tabs, four in view.
+        assert_eq!(Layout::new(&Frame { tab_scroll: 200, ..row(8, 1000) }).tab_scroll, 135);
+        assert_eq!(Layout::new(&Frame { tab_scroll: 210, ..row(8, 1000) }).tab_scroll, 270);
+        let far = Layout::new(&Frame { tab_scroll: 10_000, ..row(8, 1000) });
+        assert_eq!(far.tab_scroll, 540);
+        assert_eq!(far.tabs[4].left, far.strip.left);
+        assert_eq!(far.tabs[7].right, far.strip.right);
+        assert_eq!(Layout::new(&Frame { tab_scroll: -5, ..row(8, 1000) }).tab_scroll, 0);
+        // Tabs that fit never scroll.
+        assert_eq!(Layout::new(&Frame { tab_scroll: 50, ..row(3, 1000) }).tab_scroll, 0);
+    }
+
+    #[test]
+    fn reveal_scrolls_just_enough_to_show_a_tab() {
+        let start = Layout::new(&row(8, 1000));
+        assert_eq!(start.reveal(3), 0, "already in view");
+        assert_eq!(start.reveal(7), 540, "it becomes the last in view");
+        assert_eq!(start.reveal(5), 270);
+        let end = Layout::new(&Frame { tab_scroll: 540, ..row(8, 1000) });
+        assert_eq!(end.reveal(4), 540);
+        assert_eq!(end.reveal(1), 135, "it becomes the first in view");
+        assert_eq!(end.reveal(0), 0);
+        assert_eq!(end.reveal(99), 540, "no such Tab: stay");
+    }
+
+    #[test]
+    fn scroll_buttons_step_one_tab_and_know_when_they_are_spent() {
+        let start = Layout::new(&row(8, 1000));
+        assert_eq!(start.scroll_step(1), 135);
+        assert_eq!(start.scroll_step(-1), 0);
+        assert_eq!(start.can_scroll(), (false, true));
+        let near_end = Layout::new(&Frame { tab_scroll: 405, ..row(8, 1000) });
+        assert_eq!(near_end.scroll_step(1), 540);
+        assert_eq!(near_end.scroll_step(-1), 270);
+        let end = Layout::new(&Frame { tab_scroll: 540, ..row(8, 1000) });
+        assert_eq!(end.scroll_step(1), 540);
+        assert_eq!(end.can_scroll(), (true, false));
+        assert_eq!(Layout::new(&row(3, 1000)).can_scroll(), (false, false));
+    }
+
+    #[test]
+    fn scroll_buttons_are_hit_and_light_up() {
+        let l = Layout::new(&Frame { resize_border: 8, ..row(8, 1000) });
+        assert_eq!(l.hit_test(770, 25), Hit::ScrollLeft);
+        assert_eq!(l.hit_test(795, 25), Hit::ScrollRight);
+        // Between the two, and above them: caption.
+        assert_eq!(l.hit_test(782, 25), Hit::Caption);
+        assert_eq!(l.hit_test(770, 11), Hit::Caption);
+        assert!(Hit::ScrollLeft.lights_up() && Hit::ScrollRight.lights_up());
+        assert_eq!(Hit::ScrollRight.nc_code(), 1);
     }
 
     #[test]
