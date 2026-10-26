@@ -1861,6 +1861,11 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                 let _ = SetForegroundWindow(hwnd);
                 LRESULT(1)
             }
+            #[cfg(debug_assertions)]
+            proto::WM_TEST_REPLACE_ALL => {
+                find::click_replace_all(a);
+                LRESULT(0)
+            }
             WM_HANDOFF => {
                 for request in take_handoffs() {
                     on_handoff(request);

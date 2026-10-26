@@ -574,6 +574,13 @@ pub fn click(a: &App, x: i32, y: i32) {
     }
 }
 
+/// Test hook, debug builds only: click the middle of [Replace all].
+#[cfg(debug_assertions)]
+pub fn click_replace_all(a: &App) {
+    let r = layout(a, open_mode()).replace_all;
+    click(a, (r.left + r.right) / 2, (r.top + r.bottom) / 2);
+}
+
 pub fn hover(a: &App, x: i32, y: i32) {
     let mode = open_mode();
     let hit = Some(layout(a, mode).hit_test(x, y))
