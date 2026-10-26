@@ -133,10 +133,73 @@ fn paths_match_ignoring_case_and_slash_direction() {
     );
 }
 
+// --- §3 Opening into an empty Untitled tab -------------------------------
+
+#[test]
+fn opening_a_path_into_the_only_empty_untitled_tab_takes_that_tab_over() {
+    let mut tabs = Tabs::new();
+    let untitled = added(&tabs.new_untitled());
+    let actions = tabs.open(&[path(r"C:\notes\todo.md")]);
+    assert_eq!(
+        actions,
+        [
+            Action::Watch(path(r"C:\notes\todo.md")),
+            Action::Load {
+                id: untitled,
+                path: path(r"C:\notes\todo.md"),
+                encoding: None,
+                keep_caret_line: false,
+            },
+        ]
+    );
+    tabs.loaded(untitled, file(4));
+    assert_eq!(names(&tabs), ["todo.md"]);
+    assert_eq!(tabs.iter().count(), 1);
+}
+
+#[test]
+fn an_untitled_tab_with_edits_in_it_is_kept_and_the_file_opens_beside_it() {
+    let mut tabs = Tabs::new();
+    let typed = added(&tabs.new_untitled());
+    tabs.edited(typed, 5);
+    let opened = added(&tabs.open(&[path(r"C:\a.txt")]));
+    assert_ne!(opened, typed);
+    assert_eq!(names(&tabs), ["Untitled 1", "a.txt"]);
+}
+
+#[test]
+fn two_untitled_tabs_are_left_alone_by_an_open() {
+    let mut tabs = Tabs::new();
+    tabs.new_untitled();
+    tabs.new_untitled();
+    tabs.open(&[path(r"C:\a.txt")]);
+    assert_eq!(names(&tabs), ["Untitled 1", "Untitled 2", "a.txt"]);
+}
+
+#[test]
+fn only_the_first_of_several_opens_takes_over_the_empty_untitled_tab() {
+    let mut tabs = Tabs::new();
+    let untitled = added(&tabs.new_untitled());
+    let ids: Vec<TabId> = tabs
+        .open(&[path(r"C:\a.txt"), path(r"C:\b.txt")])
+        .iter()
+        .filter_map(|a| match a {
+            Action::Load { id, .. } => Some(*id),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(ids.len(), 2);
+    assert_eq!(ids[0], untitled);
+    assert_ne!(ids[1], untitled);
+    assert_eq!(names(&tabs), ["a.txt", "b.txt"]);
+}
+
 #[test]
 fn a_file_that_fails_to_load_leaves_no_tab() {
     let mut tabs = Tabs::new();
     let keep = added(&tabs.new_untitled());
+    // Typed in, so an open may not take this Tab over.
+    tabs.edited(keep, 3);
     let id = added(&tabs.open(&[path(r"C:\locked.txt")]));
     let actions = tabs.load_failed(id);
     assert_eq!(
@@ -506,7 +569,7 @@ fn cancel_keeps_the_tab_and_its_edits() {
 #[test]
 fn save_in_the_close_dialog_writes_the_file_then_closes_the_tab() {
     let mut tabs = Tabs::new();
-    let keep = added(&tabs.new_untitled());
+    let keep = edited_untitled(&mut tabs);
     let id = edited_file(&mut tabs, r"C:\a.txt");
     tabs.close(id);
     assert!(matches!(
@@ -1602,6 +1665,7 @@ fn activating_the_shown_tab_does_nothing() {
 fn commands_for_a_closed_tab_do_nothing() {
     let mut tabs = Tabs::new();
     tabs.new_untitled();
+    tabs.new_untitled();
     let gone = open_file(&mut tabs, r"C:\a.md");
     tabs.close(gone);
     let now = t0();
@@ -1622,7 +1686,7 @@ fn commands_for_a_closed_tab_do_nothing() {
     assert_eq!(tabs.toggle_view(gone), []);
     assert_eq!(tabs.activate(gone), []);
     assert_eq!(tabs.save_as_default(gone), None);
-    assert_eq!(tabs.iter().count(), 1);
+    assert_eq!(tabs.iter().count(), 2);
 }
 
 #[test]

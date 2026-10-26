@@ -8,6 +8,9 @@
 //!
 //! Paths are compared the Windows way: case-insensitive, `/` same as `\`.
 //! `app` passes absolute paths.
+//!
+//! Opening a file takes over the only Tab when it is an empty, untouched
+//! Untitled tab, as Windows 11 Notepad does.
 
 #![allow(dead_code)] // 08 (saving, encodings), 11 (Disk changes) and 13 (Rendered view) call the rest.
 
@@ -541,7 +544,17 @@ impl Tabs {
                 actions.extend(known.map(Action::AddRecent));
                 continue;
             }
-            let id = self.push(Some(path.clone()), 0);
+            let id = match self.empty_untitled() {
+                Some(id) => {
+                    // Take the empty Tab over: its document is already there,
+                    // and only its name changes.
+                    if let Some(tab) = self.tab_mut(id) {
+                        tab.path = Some(path.clone());
+                    }
+                    id
+                }
+                None => self.push(Some(path.clone()), 0),
+            };
             if last {
                 self.show_on_load = Some(id);
             }
@@ -1199,6 +1212,21 @@ impl Tabs {
             own_save: None,
         });
         id
+    }
+
+    /// The Tab an opening file may take over, as Windows 11 Notepad does: the
+    /// only Tab, Untitled and untouched (nothing typed, never saved, no
+    /// Notice), so the open loses nothing the user would miss.
+    fn empty_untitled(&self) -> Option<TabId> {
+        let [tab] = self.tabs.as_slice() else {
+            return None;
+        };
+        (tab.is_untitled()
+            && !tab.edited
+            && !tab.chosen
+            && tab.notice.is_none()
+            && tab.text_len == 0)
+            .then_some(tab.id)
     }
 
     /// Every Tab on this file (at most one: open switches, Save As refuses).

@@ -31,8 +31,12 @@ no fixed expectation in the spec: write down what you see.
 - [ ] **One Window.** `scrivi.exe a.txt`, then `scrivi.exe b.txt`, from a console and from Explorer.
   - Expect: a second Tab in the same Window; the second process exits at once; one `scrivi.exe` in Task Manager.
 - [ ] **Elevated launch (SCRIVI-13).** From an *Administrator* console run `scrivi.exe C:\some\file.md`.
-  - Expect: the file opens in a normal, non-elevated resident (check the Elevated column in Task Manager).
-    Known: it currently also leaves an extra Untitled tab (SCRIVI-28); note whether it does.
+  - Expect: the file opens in a normal, non-elevated resident (check the Elevated column in Task Manager),
+    in one Tab: the empty Untitled tab it starts with is taken over (SCRIVI-28).
+- [ ] **Command line.** `scrivi.exe --notes.md` (expect the usage on stderr, exit code 2, nothing opens);
+  `scrivi.exe --help` (expect the usage, exit code 0); `scrivi.exe -- --notes.md` (expect the file to open).
+- [ ] **An empty Untitled tab is taken over.** Ctrl+N, then open a file (File › Open, drag-drop, Recent or a
+  second launch). Expect: one Tab, the file's. Type in an Untitled tab first and open a file: expect two Tabs.
 - [ ] **Exit.** Close the Window. Expect: no `scrivi.exe` left in Task Manager.
 
 ## Window and title row (§4)
