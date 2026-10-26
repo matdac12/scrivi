@@ -94,8 +94,9 @@ CapsLock & n::Run("<path>\scrivi.exe")
   Settings should still work. To be confirmed in the v1 hand check.
 - **Files with no extension:** scrivi registers for them, but whether Settings offers that type is to be
   confirmed in the v1 hand check.
-- **Explorer's Edit verb:** scrivi provides it for the types it is the default for. Types that hard-code
-  Notepad (`.bat`, `.reg`) keep Notepad. Other cases are to be confirmed in the v1 hand check.
+- **Explorer's Edit verb:** scrivi registers an Edit verb, but whether Explorer uses it for `.txt` and
+  `.ini` is to be confirmed in the v1 hand check. From research, types that hard-code Notepad (`.bat`,
+  `.reg`) keep Notepad.
 - **Right-click > New > Text Document:** to be confirmed in the v1 hand check.
 
 The steps for each check are in [docs/qa.md](docs/qa.md).

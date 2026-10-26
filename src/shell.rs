@@ -7,7 +7,7 @@
 use std::path::Path;
 
 use windows::core::{w, PCWSTR};
-use windows::Win32::Foundation::{ERROR_FILE_NOT_FOUND, ERROR_SUCCESS};
+use windows::Win32::Foundation::{ERROR_FILE_NOT_FOUND, ERROR_PATH_NOT_FOUND, ERROR_SUCCESS};
 use windows::Win32::System::Registry::{
     RegCloseKey, RegDeleteKeyValueW, RegDeleteKeyW, RegOpenKeyExW, RegQueryInfoKeyW,
     RegSetKeyValueW, HKEY, HKEY_CURRENT_USER, KEY_READ, REG_SZ,
@@ -133,7 +133,7 @@ pub fn remove(prefix: &str, plan: &[PlanEntry]) -> Result<(), String> {
         let name_ptr = if name.is_empty() { PCWSTR::null() } else { PCWSTR(n.as_ptr()) };
         let err = unsafe { RegDeleteKeyValueW(HKEY_CURRENT_USER, PCWSTR(k.as_ptr()), name_ptr) };
         // A missing key reports PATH_NOT_FOUND, a missing value FILE_NOT_FOUND.
-        if err != ERROR_SUCCESS && err.0 != ERROR_FILE_NOT_FOUND.0 && err.0 != 3 {
+        if err != ERROR_SUCCESS && err != ERROR_FILE_NOT_FOUND && err != ERROR_PATH_NOT_FOUND {
             return Err(format!("removing {key}: error {}", err.0));
         }
         // The key and each ancestor are candidates for pruning.
