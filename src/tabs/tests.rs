@@ -105,12 +105,18 @@ fn opening_several_paths_adds_a_tab_for_each_and_shows_the_last() {
 }
 
 #[test]
-fn opening_a_path_already_open_switches_to_its_tab() {
+fn opening_a_path_already_open_switches_to_its_tab_and_moves_it_to_the_top_of_recent_files() {
     let mut tabs = Tabs::new();
     let notes = open_file(&mut tabs, r"C:\notes\todo.md");
     tabs.new_untitled();
     let actions = tabs.open(&[path(r"C:\notes\todo.md")]);
-    assert_eq!(actions, [Action::Activate(notes)]);
+    assert_eq!(
+        actions,
+        [
+            Action::Activate(notes),
+            Action::AddRecent(path(r"C:\notes\todo.md"))
+        ]
+    );
     assert_eq!(tabs.iter().count(), 2);
 }
 
@@ -120,8 +126,8 @@ fn paths_match_ignoring_case_and_slash_direction() {
     let notes = open_file(&mut tabs, r"C:\Notes\Todo.md");
     tabs.new_untitled();
     assert_eq!(
-        tabs.open(&[path("c:/notes/TODO.MD")]),
-        [Action::Activate(notes)]
+        tabs.open(&[path("c:/notes/TODO.MD")])[0],
+        Action::Activate(notes)
     );
 }
 
@@ -807,7 +813,13 @@ fn a_replace_style_own_save_absorbs_the_file_briefly_missing() {
     let now = t0();
     tabs.saved(id, path(r"C:\a.md"), stat(11, 500), now);
     let soon = now + Duration::from_millis(300);
-    assert_eq!(tabs.disk_event(&path(r"C:\a.md"), None, soon), []);
+    assert_eq!(
+        tabs.disk_event(&path(r"C:\a.md"), None, soon),
+        [Action::Recheck {
+            path: path(r"C:\a.md"),
+            after: OWN_SAVE_WINDOW
+        }]
+    );
     assert_eq!(
         tabs.disk_event(&path(r"C:\a.md"), Some(stat(11, 500)), soon),
         []
@@ -981,7 +993,7 @@ fn reopen_with_encoding_does_nothing_for_an_untitled_tab() {
 #[test]
 fn a_file_over_50_mb_opens_read_only_without_wrap_styling_or_spell_check() {
     let mut tabs = Tabs::new();
-    let id = open_sized(&mut tabs, r"C:\huge.md", LARGE_FILE_BYTES + 1);
+    let id = open_sized(&mut tabs, r"C:\large.md", LARGE_FILE_BYTES + 1);
     let tab = tabs.get(id).unwrap();
     assert!(tab.read_only());
     assert!(!tab.wrap_allowed());
@@ -995,7 +1007,7 @@ fn a_file_over_50_mb_opens_read_only_without_wrap_styling_or_spell_check() {
 #[test]
 fn a_file_of_exactly_50_mb_is_not_a_large_file() {
     let mut tabs = Tabs::new();
-    let id = open_sized(&mut tabs, r"C:\big.log", LARGE_FILE_BYTES);
+    let id = open_sized(&mut tabs, r"C:\exactly-50-mb.log", LARGE_FILE_BYTES);
     let tab = tabs.get(id).unwrap();
     assert!(!tab.read_only());
     assert_eq!(tab.notice(), None);
@@ -1004,7 +1016,7 @@ fn a_file_of_exactly_50_mb_is_not_a_large_file() {
 #[test]
 fn the_large_file_notice_closes_with_its_x() {
     let mut tabs = Tabs::new();
-    let id = open_sized(&mut tabs, r"C:\huge.log", LARGE_FILE_BYTES + 1);
+    let id = open_sized(&mut tabs, r"C:\large.log", LARGE_FILE_BYTES + 1);
     assert_eq!(
         tabs.notice_action(id, NoticeAction::Dismiss),
         [Action::Changed(id)]
@@ -1017,7 +1029,7 @@ fn the_large_file_notice_closes_with_its_x() {
 #[test]
 fn a_large_file_refuses_edits_and_encoding_or_line_ending_changes() {
     let mut tabs = Tabs::new();
-    let id = open_sized(&mut tabs, r"C:\huge.log", LARGE_FILE_BYTES + 1);
+    let id = open_sized(&mut tabs, r"C:\large.log", LARGE_FILE_BYTES + 1);
     assert_eq!(tabs.edited(id, 1), []);
     assert_eq!(tabs.set_eol(id, Eol::Crlf), []);
     assert_eq!(tabs.set_encoding(id, Encoding::Utf16Le), []);
@@ -1208,4 +1220,81 @@ fn a_document_for_a_closed_tab_is_handed_straight_back() {
     let gone = added(&tabs.new_untitled());
     tabs.close(gone);
     assert_eq!(tabs.set_document(gone, EditorDoc(9)), Some(EditorDoc(9)));
+}
+
+// --- Edge cases ----------------------------------------------------------
+
+#[test]
+fn a_file_still_missing_when_rechecked_after_the_own_save_window_is_deleted_on_disk() {
+    let mut tabs = Tabs::new();
+    let id = open_file(&mut tabs, r"C:\a.md");
+    let now = t0();
+    tabs.saved(id, path(r"C:\a.md"), stat(11, 500), now);
+    let soon = now + Duration::from_millis(300);
+    tabs.disk_event(&path(r"C:\a.md"), None, soon);
+    tabs.disk_event(&path(r"C:\a.md"), None, soon + OWN_SAVE_WINDOW);
+    assert_eq!(tabs.get(id).unwrap().notice(), Some(Notice::DeletedOnDisk));
+}
+
+#[test]
+fn when_the_last_of_several_files_fails_to_load_an_earlier_one_is_shown() {
+    let mut tabs = Tabs::new();
+    let actions = tabs.open(&[path(r"C:\a.txt"), path(r"C:\locked.txt")]);
+    let ids: Vec<TabId> = actions
+        .iter()
+        .filter_map(|a| match a {
+            Action::Load { id, .. } => Some(*id),
+            _ => None,
+        })
+        .collect();
+    tabs.loaded(ids[0], file(1));
+    let actions = tabs.load_failed(ids[1]);
+    assert_eq!(actions.last(), Some(&Action::Activate(ids[0])));
+    assert_eq!(tabs.active(), Some(ids[0]));
+}
+
+#[test]
+fn a_failed_save_of_another_tab_does_not_call_off_a_pending_close() {
+    let mut tabs = Tabs::new();
+    let other = edited_file(&mut tabs, r"C:\other.txt");
+    let id = edited_file(&mut tabs, r"C:\a.txt");
+    tabs.close(id);
+    tabs.close_reply(id, CloseReply::Save);
+    tabs.save_failed(other);
+    let actions = tabs.saved(id, path(r"C:\a.txt"), stat(11, 200), t0());
+    assert!(actions.contains(&Action::Closed { id, document: None }));
+}
+
+#[test]
+fn esc_returns_a_rendered_tab_to_the_source_view_and_does_nothing_in_the_source_view() {
+    let mut tabs = Tabs::new();
+    let id = open_file(&mut tabs, r"C:\a.md");
+    assert_eq!(tabs.show_source(id), []);
+    tabs.toggle_view(id);
+    assert_eq!(tabs.show_source(id), [Action::Changed(id)]);
+    assert_eq!(tabs.get(id).unwrap().view(), View::Source);
+}
+
+#[test]
+fn the_large_file_notice_can_show_the_file_size() {
+    let mut tabs = Tabs::new();
+    let id = open_sized(&mut tabs, r"C:\large.log", LARGE_FILE_BYTES + 1);
+    assert_eq!(
+        tabs.get(id).unwrap().file_size(),
+        Some(LARGE_FILE_BYTES + 1)
+    );
+    let untitled = added(&tabs.new_untitled());
+    assert_eq!(tabs.get(untitled).unwrap().file_size(), None);
+}
+
+#[test]
+fn a_deleted_file_that_comes_back_unchanged_drops_the_deleted_notice() {
+    let mut tabs = Tabs::new();
+    let id = open_file(&mut tabs, r"C:\a.md");
+    tabs.disk_event(&path(r"C:\a.md"), None, t0());
+    assert_eq!(
+        tabs.disk_event(&path(r"C:\a.md"), as_loaded(), t0()),
+        [Action::Changed(id)]
+    );
+    assert_eq!(tabs.get(id).unwrap().notice(), None);
 }

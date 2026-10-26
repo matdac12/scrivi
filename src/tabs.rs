@@ -203,6 +203,10 @@ pub enum Action {
     Watch(PathBuf),
     /// Stop watching this file.
     Unwatch(PathBuf),
+    /// Stat `path` again `after` this long and pass the result to
+    /// [`Tabs::disk_event`]: the file was missing just after scrivi's own
+    /// save, which may be that save in mid-replace.
+    Recheck { path: PathBuf, after: Duration },
     /// Move this file to the top of the recent files.
     AddRecent(PathBuf),
     /// Show this note in the status bar for a moment.
@@ -218,7 +222,7 @@ pub struct Tab {
     /// `None` for an Untitled tab.
     path: Option<PathBuf>,
     /// The N in "Untitled N"; kept after a Save As, but then unused.
-    untitled: u32,
+    untitled_number: u32,
     document: Option<EditorDoc>,
     unsaved: bool,
     view: View,
@@ -232,6 +236,8 @@ pub struct Tab {
     loaded: bool,
     /// The file on disk as this Tab last knew it; `None` if it is missing.
     disk: Option<FileStat>,
+    /// The file the last time it existed.
+    last_seen: Option<FileStat>,
     /// When scrivi last saved this Tab, while that save's events may still
     /// be arriving.
     own_save: Option<Instant>,
@@ -249,7 +255,7 @@ impl Tab {
                 .file_name()
                 .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_else(|| path.to_string_lossy().into_owned()),
-            None => format!("Untitled {}", self.untitled),
+            None => format!("Untitled {}", self.untitled_number),
         }
     }
 
@@ -343,11 +349,20 @@ impl Tab {
         }
     }
 
-    /// Rereads the Tab's file in place, detecting its encoding.
-    fn reload(&self) -> Action {
-        self.reread(None)
+    /// The file's size on disk, for the Large file Notice; `None` for an
+    /// Untitled tab.
+    pub fn file_size(&self) -> Option<u64> {
+        self.last_seen.map(|s| s.size)
     }
 
+    /// Back to the Source view if the Tab may no longer be rendered.
+    fn fit_view(&mut self) {
+        if !self.can_render() {
+            self.view = View::Source;
+        }
+    }
+
+    /// Rereads the Tab's file in place, as `encoding` or by detection.
     fn reread(&self, encoding: Option<Encoding>) -> Action {
         Action::Load {
             id: self.id,
@@ -416,7 +431,8 @@ impl Tabs {
     }
 
     /// Opens each path in its own Tab, or switches to the Tab that already
-    /// has it. The last path's Tab is shown.
+    /// has it. The last path's Tab is shown. Every opened file moves to the
+    /// top of the recent files (a new Tab's once it has loaded).
     pub fn open(&mut self, paths: &[PathBuf]) -> Vec<Action> {
         let mut actions = Vec::new();
         for (i, path) in paths.iter().enumerate() {
@@ -426,6 +442,8 @@ impl Tabs {
                     self.show_on_load = None;
                     actions.extend(self.activate(id));
                 }
+                let known = self.get(id).and_then(Tab::path).map(Path::to_path_buf);
+                actions.extend(known.map(Action::AddRecent));
                 continue;
             }
             let id = self.push(Some(path.clone()), 0);
@@ -454,15 +472,14 @@ impl Tabs {
         tab.encoding = file.encoding;
         tab.eol = file.eol;
         tab.disk = Some(file.stat);
+        tab.last_seen = Some(file.stat);
         tab.text_len = file.text_len;
         tab.large = file.stat.size > LARGE_FILE_BYTES;
         tab.unsaved = false;
         let keep_large_notice = tab.notice == Some(Notice::LargeFile);
         tab.notice =
             (tab.large && (first || !was_large || keep_large_notice)).then_some(Notice::LargeFile);
-        if !tab.can_render() {
-            tab.view = View::Source;
-        }
+        tab.fit_view();
         let path = tab.path.clone();
 
         let mut actions = vec![Action::Changed(id)];
@@ -478,8 +495,9 @@ impl Tabs {
     }
 
     /// `app` could not perform an [`Action::Load`]. A Tab that never loaded
-    /// goes away (an Untitled tab takes the place of the last one); a Tab
-    /// that already shows text keeps it.
+    /// goes away (an Untitled tab takes the place of the last one, and if
+    /// nothing is shown the last Tab is); a Tab that already shows text keeps
+    /// it.
     pub fn load_failed(&mut self, id: TabId) -> Vec<Action> {
         if self.get(id).is_none_or(|t| t.loaded) {
             return Vec::new();
@@ -490,6 +508,9 @@ impl Tabs {
         let mut actions = self.remove(id);
         if self.tabs.is_empty() {
             actions.extend(self.new_untitled());
+        } else if self.active.is_none() && self.show_on_load.is_none() {
+            let last = self.tabs[self.tabs.len() - 1].id;
+            actions.extend(self.activate(last));
         }
         actions
     }
@@ -497,15 +518,15 @@ impl Tabs {
     /// Adds "Untitled N" at the end, N the lowest number no open Untitled
     /// tab uses, and makes it active.
     pub fn new_untitled(&mut self) -> Vec<Action> {
-        let untitled = (1..)
+        let number = (1..)
             .find(|n| {
                 !self
                     .tabs
                     .iter()
-                    .any(|t| t.is_untitled() && t.untitled == *n)
+                    .any(|t| t.is_untitled() && t.untitled_number == *n)
             })
             .expect("u32 has room");
-        let id = self.push(None, untitled);
+        let id = self.push(None, number);
         self.active = Some(id);
         vec![Action::CreateDocument(id), Action::Activate(id)]
     }
@@ -684,25 +705,20 @@ impl Tabs {
         tab.loaded = true;
         tab.unsaved = false;
         tab.disk = Some(stat);
+        tab.last_seen = Some(stat);
         tab.own_save = Some(now);
         if matches!(tab.notice, Some(Notice::DiskChange | Notice::DeletedOnDisk)) {
             tab.notice = None;
         }
-        if !tab.can_render() {
-            tab.view = View::Source;
-        }
+        tab.fit_view();
         actions.push(Action::Changed(id));
         actions.push(Action::AddRecent(path.clone()));
 
         // Another Tab on the same file just had it overwritten.
-        let others: Vec<TabId> = self
-            .tabs
-            .iter()
-            .filter(|t| t.id != id && t.is_at(&path))
-            .map(|t| t.id)
-            .collect();
-        for other in others {
-            actions.extend(self.react_to_disk(other, Some(stat), now));
+        for other in self.tabs_at(&path) {
+            if other != id {
+                actions.extend(self.react_to_disk(other, Some(stat), now));
+            }
         }
 
         match self.pending_close {
@@ -722,23 +738,21 @@ impl Tabs {
     /// Per Tab with that file: nothing if the file is as the Tab knows it
     /// (which covers scrivi's own saves); a silent reload if the Tab has no
     /// unsaved edits; otherwise the Disk change Notice. A missing file keeps
-    /// the text, marks it unsaved and shows the deleted-on-disk Notice,
-    /// except within [`OWN_SAVE_WINDOW`] of scrivi's own save, until a stat
-    /// shows that save landed (a replace-style save briefly removes the file).
+    /// the text, marks it unsaved and shows the deleted-on-disk Notice; if
+    /// it comes back as it was, that Notice goes again.
+    ///
+    /// The pending-save marker: within [`OWN_SAVE_WINDOW`] of scrivi's own
+    /// save, and until a stat shows that save's size and modified time, a
+    /// missing file is taken for the save in mid-replace. It answers
+    /// [`Action::Recheck`] instead, so a real deletion still shows.
     pub fn disk_event(
         &mut self,
         path: &Path,
         on_disk: Option<FileStat>,
         now: Instant,
     ) -> Vec<Action> {
-        let ids: Vec<TabId> = self
-            .tabs
-            .iter()
-            .filter(|t| t.is_at(path))
-            .map(|t| t.id)
-            .collect();
         let mut actions = Vec::new();
-        for id in ids {
+        for id in self.tabs_at(path) {
             actions.extend(self.react_to_disk(id, on_disk, now));
         }
         actions
@@ -759,12 +773,26 @@ impl Tabs {
         }
         let own_save_landing = tab
             .own_save
-            .is_some_and(|at| now.saturating_duration_since(at) <= OWN_SAVE_WINDOW);
+            .is_some_and(|at| now.saturating_duration_since(at) < OWN_SAVE_WINDOW);
         if on_disk.is_none() && own_save_landing {
-            return Vec::new();
+            let path = tab.path.clone().expect("loaded Tabs have a path");
+            return vec![Action::Recheck {
+                path,
+                after: OWN_SAVE_WINDOW,
+            }];
         }
+        let back_as_it_was = tab.disk.is_none() && on_disk == tab.last_seen;
         tab.disk = on_disk;
-        if on_disk.is_none() {
+        if on_disk.is_some() {
+            tab.last_seen = on_disk;
+        }
+        if back_as_it_was {
+            // Still unsaved: the edits, if any, are still not in the file.
+            if tab.notice == Some(Notice::DeletedOnDisk) {
+                tab.notice = None;
+            }
+            vec![Action::Changed(id)]
+        } else if on_disk.is_none() {
             tab.unsaved = true;
             tab.notice = Some(Notice::DeletedOnDisk);
             vec![Action::Changed(id)]
@@ -772,7 +800,7 @@ impl Tabs {
             tab.notice = Some(Notice::DiskChange);
             vec![Action::Changed(id)]
         } else {
-            vec![tab.reload()]
+            vec![tab.reread(None)]
         }
     }
 
@@ -784,7 +812,7 @@ impl Tabs {
             return Vec::new();
         };
         match (tab.notice, action) {
-            (Some(Notice::DiskChange), NoticeAction::Reload) => vec![tab.reload()],
+            (Some(Notice::DiskChange), NoticeAction::Reload) => vec![tab.reread(None)],
             (Some(Notice::DiskChange), NoticeAction::KeepMine)
             | (Some(Notice::LargeFile), NoticeAction::Dismiss) => {
                 tab.notice = None;
@@ -841,8 +869,19 @@ impl Tabs {
         }
     }
 
-    /// Ctrl+E: switches a Markdown tab between the Source and Rendered
-    /// views. Over the 1 MB rule it only flashes "Too large to render"; in
+    /// Esc: back to the Source view.
+    pub fn show_source(&mut self, id: TabId) -> Vec<Action> {
+        match self.tab_mut(id) {
+            Some(tab) if tab.view == View::Rendered => {
+                tab.view = View::Source;
+                vec![Action::Changed(id)]
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    /// Ctrl+E: switches the Tab of a Markdown file between the Source and
+    /// Rendered views. Over the 1 MB rule it only flashes "Too large to render"; in
     /// a Text file it does nothing.
     pub fn toggle_view(&mut self, id: TabId) -> Vec<Action> {
         let Some(tab) = self.tab_mut(id) else {
@@ -883,9 +922,13 @@ impl Tabs {
     }
 
     /// The Save As dialog was cancelled, or the write failed (`app` shows
-    /// why). A close waiting on this save is called off.
-    pub fn save_failed(&mut self, _id: TabId) -> Vec<Action> {
-        self.pending_close = None;
+    /// why). A close waiting on this save is called off: this Tab's own, or
+    /// the Window's Save all.
+    pub fn save_failed(&mut self, id: TabId) -> Vec<Action> {
+        match self.pending_close {
+            Some(PendingClose::Tab(waiting)) if waiting != id => {}
+            _ => self.pending_close = None,
+        }
         Vec::new()
     }
 
@@ -922,13 +965,13 @@ impl Tabs {
     }
 
     /// Appends a fresh Tab with the defaults for new files: UTF-8, LF.
-    fn push(&mut self, path: Option<PathBuf>, untitled: u32) -> TabId {
+    fn push(&mut self, path: Option<PathBuf>, untitled_number: u32) -> TabId {
         self.next_id += 1;
         let id = TabId(self.next_id);
         self.tabs.push(Tab {
             id,
             path,
-            untitled,
+            untitled_number,
             document: None,
             unsaved: false,
             view: View::Source,
@@ -939,9 +982,19 @@ impl Tabs {
             text_len: 0,
             loaded: false,
             disk: None,
+            last_seen: None,
             own_save: None,
         });
         id
+    }
+
+    /// Every Tab on this file (two, after a Save As onto an open file).
+    fn tabs_at(&self, path: &Path) -> Vec<TabId> {
+        self.tabs
+            .iter()
+            .filter(|t| t.is_at(path))
+            .map(|t| t.id)
+            .collect()
     }
 
     fn find(&self, path: &Path) -> Option<TabId> {
