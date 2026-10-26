@@ -93,6 +93,16 @@ impl Drop for Resident {
     }
 }
 
+/// The file's bytes, once a save in flight lets it be read.
+fn read_settled(file: &Path) -> Vec<u8> {
+    let mut bytes = None;
+    wait_until(&format!("{} to be readable", file.display()), SHORT, || {
+        bytes = std::fs::read(file).ok();
+        bytes.is_some()
+    });
+    bytes.unwrap()
+}
+
 fn command(hwnd: HWND, id: usize) {
     unsafe { PostMessageW(Some(hwnd), WM_COMMAND, WPARAM(id), LPARAM(0)) }.unwrap();
 }
@@ -115,7 +125,10 @@ fn type_into(edit: HWND, text: &str) {
 /// Send `commands`, then wait until `file` was written again.
 fn save_and_wait(hwnd: HWND, file: &Path, limit: Duration) {
     let long_ago = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000_000);
-    std::fs::File::options().write(true).open(file).unwrap().set_modified(long_ago).unwrap();
+    // A save in flight (ReplaceFileW) leaves the path missing or locked for a moment.
+    wait_until("the file to be writable", SHORT, || {
+        std::fs::File::options().write(true).open(file).and_then(|f| f.set_modified(long_ago)).is_ok()
+    });
     command(hwnd, SAVE);
     wait_until(&format!("{} saved", file.display()), limit, || {
         std::fs::metadata(file).and_then(|m| m.modified()).is_ok_and(|t| t != long_ago)
@@ -164,13 +177,13 @@ fn replace_all_is_one_undo_step_and_go_to_line_works_in_a_50_mb_file() {
     // Wait for the replacement to be in the document: save until it shows.
     wait_until("Replace all", SHORT, || {
         save_and_wait(hwnd, &notes, SHORT);
-        std::fs::read(&notes).unwrap() == b"x bar x\nx x\nnothing here\n"
+        std::fs::read(&notes).is_ok_and(|b| b == b"x bar x\nx x\nnothing here\n")
     });
 
     // One undo puts all four back.
     command(hwnd, UNDO);
     save_and_wait(hwnd, &notes, SHORT);
-    assert_eq!(std::fs::read(&notes).unwrap(), original);
+    assert_eq!(read_settled(&notes), original);
 
     // Ctrl+G 1000000 in the 50 MB file: the caret is at the start of that
     // line, so a typed X goes there.
@@ -182,7 +195,7 @@ fn replace_all_is_one_undo_step_and_go_to_line_works_in_a_50_mb_file() {
     let editor = unsafe { FindWindowExW(Some(hwnd), None, &HSTRING::from("Scintilla"), PCWSTR::null()) }.unwrap();
     unsafe { SendMessageW(editor, WM_CHAR, Some(WPARAM('X' as usize)), Some(LPARAM(0))) };
     save_and_wait(hwnd, &big, LONG);
-    let saved = std::fs::read(&big).unwrap();
+    let saved = read_settled(&big);
     let at = 999_999 * 32;
     assert_eq!(&saved[at..at + 6], b"Xline ", "line 1,000,000 starts at byte {at}");
     assert_eq!(saved.len(), 50 * 1024 * 1024 + 1);

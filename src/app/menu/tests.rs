@@ -215,6 +215,14 @@ fn is_checked(items: &[Item], id: u16) -> bool {
 }
 
 #[test]
+fn find_replace_and_go_to_line_are_greyed_while_the_rendered_view_shows() {
+    let edit = items(EDIT, &State { rendered: true, read_only: true, ..state() });
+    for id in [cmd::FIND, cmd::REPLACE, cmd::GO_TO_LINE] {
+        assert!(!enabled(&edit, id), "{id}");
+    }
+}
+
+#[test]
 fn word_wrap_is_checked_when_on_and_greyed_for_a_large_file() {
     assert!(is_checked(&items(VIEW, &state()), cmd::WORD_WRAP));
     assert!(!is_checked(&items(VIEW, &State { wrap: false, ..state() }), cmd::WORD_WRAP));
