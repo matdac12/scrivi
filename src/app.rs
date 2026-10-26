@@ -4,6 +4,7 @@
 //! class `Scrivi.Window` that appends each request it receives to the file named
 //! by `SCRIVI_TEST_LOG`, if set. 06 keeps `run` and `on_handoff` as the seam.
 
+#[cfg(debug_assertions)]
 use std::io::Write;
 
 use windows::core::PCWSTR;
