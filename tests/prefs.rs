@@ -1,5 +1,9 @@
+#![cfg(debug_assertions)]
+//! Debug builds only: release ignores `SCRIVI_TEST_PREFS_DIR`, and this would
+//! write the real scrivi.ini.
+//!
 //! Recent files survive a restart (SCRIVI-23): a real, headless resident with
-//! its own `SCRIVI_TEST_PREFS_DIR`, so Mattia's real scrivi.ini and Recent
+//! its own `SCRIVI_TEST_PREFS_DIR`, so the real scrivi.ini and Recent
 //! list are never touched. Opening a file writes scrivi.ini at once; a second
 //! resident, started later on the same folder, keeps what the first wrote.
 

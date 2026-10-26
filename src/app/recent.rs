@@ -5,7 +5,7 @@
 //! The prefs live in a thread-local here, so `app.rs` only calls the small
 //! functions below. The jump list is the system's own Recent category:
 //! `SHAddToRecentDocs` for a file whose handler is our registered ProgID
-//! (`--register`); clicking a entry runs that ProgID's open command, which
+//! (`--register`); clicking an entry runs that ProgID's open command, which
 //! reaches the running Window through the launch handoff. Test and debug runs
 //! with their own prefs never call the shell, so they leave Mattia's real
 //! Recent list and jump list alone.
@@ -20,14 +20,13 @@ use windows::Win32::UI::Shell::{SHAddToRecentDocs, SHARD_PATHW};
 use windows::Win32::UI::WindowsAndMessaging::*;
 
 use super::menu::Item;
+use crate::editor::sci;
 use super::{cmd, command, wide, App};
 use crate::prefs::{self, Placement, Prefs};
 use crate::proto::TIMER_PREFS;
 use crate::tabs::{Action, StatusNote, Tabs};
 
-/// SCI_SETZOOM and SCI_GETZOOM.
 const SCI_SETZOOM: u32 = 2373;
-const SCI_GETZOOM: u32 = 2374;
 /// Quiet time after the Window moves or resizes before prefs are written.
 const SAVE_MS: u32 = 800;
 
@@ -63,6 +62,9 @@ pub fn restore_window(hwnd: HWND) -> bool {
             let _ = SetWindowPos(hwnd, None, want.x, want.y, want.w, want.h, SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
         }
     }
+    // The Window now sits where it sits (the default if the monitor is gone):
+    // that is what a write before the first move must keep, not the stale rectangle.
+    note_normal(hwnd);
     maximized
 }
 
@@ -88,7 +90,7 @@ pub fn set_wrap(a: &App, wrap: bool) {
 
 /// SCN_ZOOM: remember the new zoom.
 pub fn zoom_changed(a: &App) {
-    let points = (a.editor.call(SCI_GETZOOM, 0, 0) as i32).clamp(prefs::ZOOM_MIN, prefs::ZOOM_MAX);
+    let points = (a.editor.call(sci::SCI_GETZOOM, 0, 0) as i32).clamp(prefs::ZOOM_MIN, prefs::ZOOM_MAX);
     if with(|s| std::mem::replace(&mut s.prefs.zoom, points)) != points {
         arm(a.hwnd);
     }
@@ -96,6 +98,12 @@ pub fn zoom_changed(a: &App) {
 
 /// `WM_MOVE` or `WM_SIZE`: note the rectangle and write prefs once it settles.
 pub fn window_changed(hwnd: HWND) {
+    note_normal(hwnd);
+    arm(hwnd);
+}
+
+/// Remember the Window's rectangle, unless it is maximised or minimised.
+fn note_normal(hwnd: HWND) {
     unsafe {
         if !IsZoomed(hwnd).as_bool() && !IsIconic(hwnd).as_bool() {
             let mut r = RECT::default();
@@ -104,7 +112,6 @@ pub fn window_changed(hwnd: HWND) {
             }
         }
     }
-    arm(hwnd);
 }
 
 fn arm(hwnd: HWND) {
