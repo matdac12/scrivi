@@ -12,13 +12,10 @@ use std::process::{Child, Command};
 use std::time::{Duration, Instant, SystemTime};
 
 use windows::core::{HSTRING, PCWSTR};
-use windows::Win32::Foundation::{HWND, LPARAM, POINT, RECT, WPARAM};
-use windows::Win32::Graphics::Gdi::ScreenToClient;
-use windows::Win32::UI::HiDpi::GetDpiForWindow;
+use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
 use windows::Win32::UI::WindowsAndMessaging::{
-    FindWindowExW, FindWindowW, GetDlgItem, GetWindowLongPtrW, GetWindowRect, PostMessageW,
-    SendMessageW, GWL_STYLE, WM_CHAR, WM_COMMAND, WM_KEYDOWN, WM_LBUTTONDOWN, WM_SETTEXT,
-    WS_VISIBLE,
+    FindWindowExW, FindWindowW, GetDlgItem, GetWindowLongPtrW, PostMessageW, SendMessageW,
+    GWL_STYLE, WM_APP, WM_CHAR, WM_COMMAND, WM_KEYDOWN, WM_SETTEXT, WS_VISIBLE,
 };
 
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -33,6 +30,8 @@ const GO_TO_LINE: usize = 118;
 const ID_FIND: i32 = 0x1A1;
 const ID_REPLACE: i32 = 0x1A2;
 const ID_GOTO: i32 = 0x1A3;
+/// `proto::WM_TEST_REPLACE_ALL` (debug builds): a click on [Replace all].
+const WM_TEST_REPLACE_ALL: u32 = WM_APP + 0x1F0;
 const VK_RETURN: usize = 0x0D;
 
 fn instance() -> String {
@@ -184,19 +183,9 @@ fn replace_all_is_one_undo_step_and_go_to_line_works_in_a_50_mb_file() {
     // Ctrl+H, "foo" → "x", [Replace all]: 4 matches, whatever their case.
     command(hwnd, REPLACE);
     type_into(input(hwnd, ID_FIND), "foo");
-    let replace = input(hwnd, ID_REPLACE);
-    type_into(replace, "x");
-    // The button sits 8 + 8 + 72 + 8 DIPs right of the replace input; click its middle.
-    let scale = unsafe { GetDpiForWindow(hwnd) } as f32 / 96.0;
-    let mut r = RECT::default();
-    unsafe { GetWindowRect(replace, &mut r) }.unwrap();
-    let mut at = POINT {
-        x: r.right + (96.0 * scale + 30.0 * scale) as i32,
-        y: (r.top + r.bottom) / 2,
-    };
-    unsafe { ScreenToClient(hwnd, &mut at) }.ok().unwrap();
-    let lparam = LPARAM((at.x as isize & 0xffff) | ((at.y as isize & 0xffff) << 16));
-    unsafe { PostMessageW(Some(hwnd), WM_LBUTTONDOWN, WPARAM(1), lparam) }.unwrap();
+    type_into(input(hwnd, ID_REPLACE), "x");
+    // [Replace all], clicked in the middle of the app's own layout rect.
+    unsafe { PostMessageW(Some(hwnd), WM_TEST_REPLACE_ALL, WPARAM(0), LPARAM(0)) }.unwrap();
     // Wait for the replacement to be in the document: save until it shows.
     wait_until("Replace all", SHORT, || {
         save_and_wait(hwnd, &notes, SHORT);

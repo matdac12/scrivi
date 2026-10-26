@@ -104,6 +104,13 @@ pub const WM_RENDERED_FAILED: u32 = WM_APP + 0x132;
 /// pointer travels). The UI thread stats each file again before acting.
 pub const WM_DISK_EVENT: u32 = WM_APP + 0x190;
 
+// Test hooks, debug builds only: numbers from 0x1F0.
+
+/// Clicks the find bar's [Replace all] at the middle of its own layout rect,
+/// the way a user's click ends up (`app::find::click`), whatever the DPI.
+#[cfg(debug_assertions)]
+pub const WM_TEST_REPLACE_ALL: u32 = WM_APP + 0x1F0;
+
 #[cfg(test)]
 mod tests {
     use super::name;
@@ -128,6 +135,8 @@ mod tests {
             super::WM_RENDERED_LINK,
             super::WM_RENDERED_FAILED,
             super::WM_DISK_EVENT,
+            #[cfg(debug_assertions)]
+            super::WM_TEST_REPLACE_ALL,
         ];
         for (i, a) in all.iter().enumerate() {
             assert!(all[i + 1..].iter().all(|b| a != b), "{a:#x} used twice");
