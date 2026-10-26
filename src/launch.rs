@@ -189,8 +189,8 @@ fn hand_off_when_up(request: &Request) -> i32 {
 pub fn run(args: &[String]) -> i32 {
     let resident = find_resident();
     match decide(args, resident.is_some()) {
-        // `shell` (16) implements these.
-        Decision::Register | Decision::Unregister => 0,
+        Decision::Register => crate::shell::register(),
+        Decision::Unregister => crate::shell::unregister(),
         Decision::HandOff(request) => match resident {
             Some(hwnd) if hand_off(hwnd, &absolutize(request)) => 0,
             _ => 1,

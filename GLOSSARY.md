@@ -9,7 +9,7 @@ Any plain-text file scrivi opens, whatever its extension (or none).
 _Avoid_: txt file, document
 
 **Markdown file**:
-A text file with a `.md` or `.markdown` extension; the only kind that gets markdown styling and a rendered view.
+A text file with a `.md` or `.markdown` extension; the only kind that gets markdown styling and a rendered view. An Untitled tab counts as one until it is saved under another extension.
 _Avoid_: md file, note
 
 **Window**:
