@@ -34,6 +34,8 @@ pub struct State {
     /// Some text is selected.
     pub selection: bool,
     pub can_paste: bool,
+    /// A Markdown file or Untitled tab: Ctrl+E applies (13).
+    pub markdown: bool,
 }
 
 /// One line of a popup, ready to show.
@@ -95,7 +97,7 @@ pub const EDIT: &[Entry] = &[
 ];
 
 pub const VIEW: &[Entry] = &[
-    Entry::Command { label: "&Rendered view", keys: "Ctrl+E", id: cmd::RENDERED_VIEW, enabled: later },
+    Entry::Command { label: "&Rendered view", keys: "Ctrl+E", id: cmd::RENDERED_VIEW, enabled: |s| s.markdown },
     Entry::Command { label: "&Word wrap", keys: "Alt+Z", id: cmd::WORD_WRAP, enabled: later },
     Entry::Separator,
     Entry::Command { label: "Zoom &in", keys: "Ctrl++", id: cmd::ZOOM_IN, enabled: later },
@@ -653,9 +655,14 @@ fn state_flags(enabled: bool, checked: bool) -> MENU_ITEM_STATE {
 fn state_of(a: &App) -> State {
     let tab = {
         let tabs = a.tabs.borrow();
-        tabs.active().and_then(|id| tabs.get(id)).map(|t| (t.encoding(), t.eol(), t.read_only(), t.is_untitled()))
+        tabs.active().and_then(|id| tabs.get(id)).map(|t| {
+            // The Rendered view is read-only too (13).
+            let read_only = t.read_only() || t.view() == crate::tabs::View::Rendered;
+            (t.encoding(), t.eol(), read_only, t.is_untitled(), t.kind() == crate::tabs::Kind::Markdown)
+        })
     };
-    let (encoding, eol, read_only, untitled) = tab.unwrap_or((NEW_FILE.0, NEW_FILE.1, false, true));
+    let (encoding, eol, read_only, untitled, markdown) =
+        tab.unwrap_or((NEW_FILE.0, NEW_FILE.1, false, true, true));
     let ask = |msg| editor_call(a, msg) != 0;
     State {
         encoding,
@@ -666,6 +673,7 @@ fn state_of(a: &App) -> State {
         can_redo: ask(sci::SCI_CANREDO),
         selection: !ask(sci::SCI_GETSELECTIONEMPTY),
         can_paste: ask(sci::SCI_CANPASTE),
+        markdown,
     }
 }
 
@@ -710,9 +718,10 @@ pub fn run(a: &App, id: u16) -> bool {
             let eol = Eol::MENU[(id - cmd::EOL) as usize];
             on_active(&|t, tab| t.set_eol(tab, eol));
         }
-        // 12 and 13 wire these; their items are greyed until then.
+        // 12 wires these; their items are greyed until then. (13's
+        // RENDERED_VIEW is routed by `app` before the menus.)
         cmd::FIND | cmd::REPLACE | cmd::GO_TO_LINE => {}
-        cmd::RENDERED_VIEW | cmd::WORD_WRAP | cmd::ZOOM_IN | cmd::ZOOM_OUT | cmd::ZOOM_RESET => {}
+        cmd::WORD_WRAP | cmd::ZOOM_IN | cmd::ZOOM_OUT | cmd::ZOOM_RESET => {}
         _ if recent::is_command(id) => recent::open(a, id),
         _ => return false,
     }

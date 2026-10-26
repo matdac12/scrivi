@@ -49,6 +49,8 @@ use crate::editor::{sci, Caret, Editor, NotifyHeader, ViewState};
 use crate::launch::{self, Request};
 use crate::mdview::{self, Applied};
 use crate::proto::{self, COPYDATA_REQUEST, ICON, RESTYLE_MS, SPELL_MS, TIMER_PREFS, TIMER_RESTYLE, TIMER_SPELL, WM_EDITOR_DPI, WM_HANDOFF};
+use crate::proto::{WM_RENDERED_FAILED, WM_RENDERED_LINK, WM_RENDERED_SHOWN};
+use crate::rendered::webview;
 use crate::spellview::SpellView;
 use crate::tabs::{Action, CloseReply, EditorDoc, FileStat, LoadedFile, StatusNote, Tab, TabId, Tabs};
 use crate::textfile::{self, Encoding, Eol};
@@ -58,6 +60,9 @@ mod atomic;
 mod files;
 mod menu;
 mod recent;
+mod rendered_view;
+
+use rendered_view::{on_rendered, rect_of, sync_rendered};
 
 /// First size of the Window, in DIPs, before prefs (09) remembers one.
 const START_W: f32 = 1100.0;
@@ -107,6 +112,8 @@ pub mod cmd {
     pub const ZOOM_IN: u16 = 142;
     pub const ZOOM_OUT: u16 = 143;
     pub const ZOOM_RESET: u16 = 144;
+    /// Esc in the Rendered view: back to the Source view (13).
+    pub const SHOW_SOURCE: u16 = 145;
     /// File › Recent files: `RECENT + i` is the i-th (SCRIVI-23).
     pub const RECENT: u16 = 200;
 }
@@ -337,6 +344,7 @@ fn accelerators() -> HACCEL {
         ACCEL { fVirt: ctrl, key: key(b'O'), cmd: cmd::OPEN },
         ACCEL { fVirt: ctrl, key: key(b'S'), cmd: cmd::SAVE },
         ACCEL { fVirt: ctrl | FSHIFT, key: key(b'S'), cmd: cmd::SAVE_AS },
+        ACCEL { fVirt: ctrl, key: key(b'E'), cmd: cmd::RENDERED_VIEW },
     ];
     unsafe { CreateAcceleratorTableW(&table) }.unwrap_or_default()
 }
@@ -461,6 +469,7 @@ fn command(a: &App, f: impl FnOnce(&mut Tabs) -> Vec<Action>) {
         relayout(a);
         set_title(a);
         rehover(a);
+        sync_rendered(a);
     }
 }
 
@@ -477,7 +486,7 @@ fn perform(a: &App, action: Action) {
         Action::ConvertEol { id, eol } => in_document(a, id, |e| e.convert_eols(eol)),
         Action::Activate(id) => show(a, id),
         Action::Changed(id) => {
-            // 13: show or hide the Rendered view as the Tab's view says.
+            // 13: `command` then shows or hides the Rendered view (`sync_rendered`).
             if a.shown.get() == Some(id) {
                 apply_settings(a, id);
                 // The Tab may have started or stopped being styled (Save As, 1 MB).
@@ -872,6 +881,7 @@ fn relayout(a: &App) {
         ui.layout.editor
     };
     a.editor.move_to(editor);
+    webview::set_bounds(rect_of(editor));
     invalidate(a, None);
 }
 
@@ -1241,6 +1251,8 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                     cmd::CLOSE_TAB => command(a, |t| t.active().map_or_else(Vec::new, |id| t.close(id))),
                     cmd::NEXT_TAB => command(a, Tabs::next),
                     cmd::PREV_TAB => command(a, Tabs::prev),
+                    cmd::RENDERED_VIEW => command(a, |t| t.active().map_or_else(Vec::new, |id| t.toggle_view(id))),
+                    cmd::SHOW_SOURCE => command(a, |t| t.active().map_or_else(Vec::new, |id| t.show_source(id))),
                     id => {
                         if !menu::run(a, id) {
                             return DefWindowProcW(hwnd, msg, wp, lp);
@@ -1289,10 +1301,15 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                     relayout(a);
                 }
                 recent::window_changed(hwnd);
+                webview::set_minimized(wp.0 as u32 == SIZE_MINIMIZED);
+                if wp.0 as u32 != SIZE_MINIMIZED {
+                    rendered_view::refocus(a);
+                }
                 LRESULT(0)
             }
             WM_MOVE => {
                 recent::window_changed(hwnd);
+                webview::parent_moved();
                 DefWindowProcW(hwnd, msg, wp, lp)
             }
             WM_GETMINMAXINFO => {
@@ -1342,6 +1359,10 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             // -1: activate without repainting a native caption we no longer have.
             WM_NCACTIVATE => DefWindowProcW(hwnd, msg, wp, LPARAM(-1)),
             WM_SETFOCUS => {
+                // 13: in the Rendered view the page takes the focus.
+                if webview::focus() {
+                    return LRESULT(0);
+                }
                 let _ = SetFocus(Some(a.editor.hwnd()));
                 LRESULT(0)
             }
@@ -1378,6 +1399,10 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             }
             // The editor's own popup is off: right-click shows spell check's menu.
             WM_CONTEXTMENU if wp.0 == a.editor.hwnd().0 as usize => {
+                // 13: no spell menu over the source behind the Rendered view.
+                if rendered_view::behind_page() {
+                    return LRESULT(0);
+                }
                 let wanted = a.shown.get().is_some_and(|id| a.tabs.borrow().get(id).is_some_and(Tab::spell_checked));
                 a.spell.context_menu(&a.editor, hwnd, lp, wanted);
                 LRESULT(0)
@@ -1428,12 +1453,35 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                 files::dropped(a, windows::Win32::UI::Shell::HDROP(wp.0 as *mut _));
                 LRESULT(0)
             }
+            WM_RENDERED_SHOWN | WM_RENDERED_LINK | WM_RENDERED_FAILED => on_rendered(a, msg, wp, lp),
             WM_DESTROY => {
                 recent::flush(hwnd);
+                webview::close();
                 PostQuitMessage(0);
                 LRESULT(0)
             }
             _ => DefWindowProcW(hwnd, msg, wp, lp),
         }
+    }
+}
+
+#[cfg(test)]
+mod cmd_tests {
+    use super::cmd::*;
+    use crate::textfile::{Encoding, Eol};
+
+    #[test]
+    fn every_command_id_and_menu_range_is_distinct() {
+        let mut ids = vec![
+            NEW_TAB, CLOSE_TAB, NEXT_TAB, PREV_TAB, OPEN, SAVE, SAVE_AS, EXIT, UNDO, REDO, CUT, COPY, PASTE,
+            SELECT_ALL, FIND, REPLACE, GO_TO_LINE, ENCODING_KEEP, REOPEN, RENDERED_VIEW, WORD_WRAP, ZOOM_IN,
+            ZOOM_OUT, ZOOM_RESET, SHOW_SOURCE,
+        ];
+        ids.extend((0..Encoding::MENU.len() as u16).map(|i| ENCODING + i));
+        ids.extend((0..Eol::MENU.len() as u16).map(|i| EOL + i));
+        let mut sorted = ids.clone();
+        sorted.sort();
+        sorted.dedup();
+        assert_eq!(sorted.len(), ids.len(), "{ids:?}");
     }
 }
