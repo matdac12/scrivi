@@ -1,1 +1,957 @@
 //! Pure Tab state machine: commands in, actions out (spec §8).
+//!
+//! `Tabs` owns every Tab rule in spec §3, §7 and §8 and nothing else: no
+//! Win32, no Scintilla, no file system. `app` calls a command, then performs
+//! the returned [`Action`]s in order. Work that needs the outside world (a
+//! dialog, a read, a write) is an action, and its outcome comes back as
+//! another command (`loaded`, `saved`, `close_reply`, ...).
+//!
+//! Paths are compared the Windows way: case-insensitive, `/` same as `\`.
+//! `app` passes absolute paths.
+
+#![allow(dead_code)] // 07 wires this into the Window.
+
+use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant, SystemTime};
+
+// Placeholders for `textfile::Encoding`, `textfile::Eol` and the Large file
+// threshold, which 02 owns. When 02 lands, delete these three and write
+// `pub use crate::textfile::{Encoding, Eol, LARGE_FILE_BYTES};`.
+
+/// How a Tab's text is encoded on disk.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Encoding {
+    Utf8,
+    Utf8Bom,
+    Utf16Le,
+    Utf16Be,
+    Windows1252,
+}
+
+/// A Tab's line ending.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Eol {
+    Lf,
+    Crlf,
+    Cr,
+}
+
+/// Over this many bytes on disk a file is a Large file (spec §7).
+pub const LARGE_FILE_BYTES: u64 = 50 * 1024 * 1024;
+
+/// Over this many bytes of text a Markdown file loses styling, spell check
+/// and the Rendered view (spec §5, the 1 MB rule).
+pub const MARKDOWN_LIMIT_BYTES: usize = 1024 * 1024;
+
+/// How long after scrivi's own save a vanished file is still taken for the
+/// middle of that save (a replace-style save deletes, then recreates).
+pub const OWN_SAVE_WINDOW: Duration = Duration::from_secs(2);
+
+/// Identifies a Tab for its whole life. Never reused.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct TabId(u64);
+
+/// The caller's editor document for a Tab (a Scintilla document pointer).
+/// `Tabs` stores it and hands it back, never looks inside.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct EditorDoc(pub isize);
+
+/// What a Tab holds, which decides styling, spell check and Ctrl+E.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Kind {
+    /// A `.md` / `.markdown` file, or an Untitled tab.
+    Markdown,
+    Text,
+}
+
+/// Which view a Tab shows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum View {
+    Source,
+    Rendered,
+}
+
+/// The bar under the tabs; at most one per Tab (spec §4).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Notice {
+    /// Changed on disk while the Tab had unsaved edits: [Keep mine] [Reload].
+    DiskChange,
+    /// Deleted or renamed on disk: [Save].
+    DeletedOnDisk,
+    /// Opened as a Large file: ×.
+    LargeFile,
+}
+
+/// A button on a [`Notice`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NoticeAction {
+    Reload,
+    KeepMine,
+    Save,
+    /// The × on the Large file Notice.
+    Dismiss,
+}
+
+/// The user's answer to a save-before-close dialog: Save / Don't save /
+/// Cancel for one Tab, Save all / Discard all / Cancel for the Window.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CloseReply {
+    Save,
+    Discard,
+    Cancel,
+}
+
+/// A note in the status bar's left slot (spec §4, §5, §6).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StatusNote {
+    /// "Read-only"
+    ReadOnly,
+    /// "Markdown styling off (over 1 MB)"
+    StylingOff,
+    /// "Rendered view · Esc to edit"
+    RenderedView,
+    /// "Too large to render", after Ctrl+E on a Markdown file over 1 MB.
+    TooLargeToRender,
+}
+
+/// A file's size and modified time, as `app` read them from disk.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FileStat {
+    pub size: u64,
+    pub modified: SystemTime,
+}
+
+/// What `app` found when it performed an [`Action::Load`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LoadedFile {
+    /// The encoding the text was decoded with.
+    pub encoding: Encoding,
+    pub eol: Eol,
+    /// The file as it was when read.
+    pub stat: FileStat,
+    /// Length of the text in the editor document, in bytes.
+    pub text_len: usize,
+}
+
+/// Where the Save As dialog starts.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SaveAsFolder {
+    /// The user's Documents folder, which only `app` can look up.
+    Documents,
+    Folder(PathBuf),
+}
+
+/// The Save As dialog's starting folder and file name.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SaveAsDefault {
+    pub folder: SaveAsFolder,
+    pub file_name: String,
+}
+
+/// Something `app` must do. Perform them in order.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Action {
+    /// Create an empty editor document for this new Untitled tab, then call
+    /// [`Tabs::set_document`].
+    CreateDocument(TabId),
+    /// Read `path` and decode it (as `encoding` if given, otherwise by
+    /// detection) into the Tab's editor document, creating or replacing the
+    /// document as the size needs. `keep_caret_line`: the Tab already shows
+    /// this file, so keep the caret on the same line as far as possible.
+    /// Then call [`Tabs::loaded`] or [`Tabs::load_failed`].
+    Load {
+        id: TabId,
+        path: PathBuf,
+        encoding: Option<Encoding>,
+        keep_caret_line: bool,
+    },
+    /// Encode the Tab's text and write it to `path`, then call
+    /// [`Tabs::saved`] or [`Tabs::save_failed`] before handling any other
+    /// message, so the watcher's events for this write find it recorded.
+    Write {
+        id: TabId,
+        path: PathBuf,
+        encoding: Encoding,
+        eol: Eol,
+    },
+    /// Convert every line ending in the Tab's text to `eol`.
+    ConvertEol { id: TabId, eol: Eol },
+    /// Show this Tab: swap its document in and restore its caret, view,
+    /// Notice and status bar.
+    Activate(TabId),
+    /// Something shown about this Tab changed (name, unsaved dot, Notice,
+    /// kind, encoding, EOL, view, read-only): redraw it, and if it is the
+    /// active Tab reapply its editor settings and view.
+    Changed(TabId),
+    /// The Tab is gone: release its document, if it had one.
+    Closed {
+        id: TabId,
+        document: Option<EditorDoc>,
+    },
+    /// Ask Save / Don't save / Cancel, then call [`Tabs::close_reply`].
+    AskSaveBeforeClose(TabId),
+    /// One dialog listing these unsaved Tabs with Save all / Discard all /
+    /// Cancel, then call [`Tabs::close_window_reply`].
+    AskSaveAll(Vec<TabId>),
+    /// Show the Save As dialog, then call [`Tabs::save_as_chosen`] or, if
+    /// cancelled, [`Tabs::save_failed`].
+    AskSaveAs { id: TabId, default: SaveAsDefault },
+    /// Ask whether to drop unsaved edits and reopen in `encoding`; on yes
+    /// call [`Tabs::reopen_confirmed`].
+    AskDiscardForReopen { id: TabId, encoding: Encoding },
+    /// Start watching this file for Disk changes.
+    Watch(PathBuf),
+    /// Stop watching this file.
+    Unwatch(PathBuf),
+    /// Move this file to the top of the recent files.
+    AddRecent(PathBuf),
+    /// Show this note in the status bar for a moment.
+    Flash(StatusNote),
+    /// Every Tab is dealt with: close the Window.
+    CloseWindow,
+}
+
+/// One Tab's state. Read it through [`Tabs::get`] and the queries below.
+#[derive(Clone, Debug)]
+pub struct Tab {
+    id: TabId,
+    /// `None` for an Untitled tab.
+    path: Option<PathBuf>,
+    /// The N in "Untitled N"; kept after a Save As, but then unused.
+    untitled: u32,
+    document: Option<EditorDoc>,
+    unsaved: bool,
+    view: View,
+    notice: Option<Notice>,
+    encoding: Encoding,
+    eol: Eol,
+    large: bool,
+    /// Length of the text in bytes, for the 1 MB rule.
+    text_len: usize,
+    /// Whether the file has been read into the Tab once.
+    loaded: bool,
+    /// The file on disk as this Tab last knew it; `None` if it is missing.
+    disk: Option<FileStat>,
+    /// When scrivi last saved this Tab, while that save's events may still
+    /// be arriving.
+    own_save: Option<Instant>,
+}
+
+impl Tab {
+    pub fn id(&self) -> TabId {
+        self.id
+    }
+
+    /// The file name, or "Untitled N".
+    pub fn name(&self) -> String {
+        match &self.path {
+            Some(path) => path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| path.to_string_lossy().into_owned()),
+            None => format!("Untitled {}", self.untitled),
+        }
+    }
+
+    /// `None` for an Untitled tab.
+    pub fn path(&self) -> Option<&Path> {
+        self.path.as_deref()
+    }
+
+    pub fn is_untitled(&self) -> bool {
+        self.path.is_none()
+    }
+
+    pub fn document(&self) -> Option<EditorDoc> {
+        self.document
+    }
+
+    /// Markdown for `.md` / `.markdown` (any case) and Untitled tabs.
+    pub fn kind(&self) -> Kind {
+        let markdown = match &self.path {
+            None => true,
+            Some(path) => path.extension().is_some_and(|e| {
+                e.eq_ignore_ascii_case("md") || e.eq_ignore_ascii_case("markdown")
+            }),
+        };
+        if markdown {
+            Kind::Markdown
+        } else {
+            Kind::Text
+        }
+    }
+
+    /// Has edits (or a Disk change or deletion) not yet written to the file.
+    pub fn unsaved(&self) -> bool {
+        self.unsaved
+    }
+
+    pub fn view(&self) -> View {
+        self.view
+    }
+
+    /// The Notice to show while this Tab is active.
+    pub fn notice(&self) -> Option<Notice> {
+        self.notice
+    }
+
+    /// How the next save encodes the text.
+    pub fn encoding(&self) -> Encoding {
+        self.encoding
+    }
+
+    pub fn eol(&self) -> Eol {
+        self.eol
+    }
+
+    /// Large files are read-only.
+    pub fn read_only(&self) -> bool {
+        self.large
+    }
+
+    /// Word wrap may be on (it is always off for Large files).
+    pub fn wrap_allowed(&self) -> bool {
+        !self.large
+    }
+
+    /// Gets markdown styling: a Markdown file within the 1 MB rule, never a
+    /// Large file.
+    pub fn styled(&self) -> bool {
+        self.kind() == Kind::Markdown && !self.large && self.text_len <= MARKDOWN_LIMIT_BYTES
+    }
+
+    /// Gets spell check: the same files as styling.
+    pub fn spell_checked(&self) -> bool {
+        self.styled()
+    }
+
+    /// Ctrl+E may show the Rendered view: the same files as styling.
+    pub fn can_render(&self) -> bool {
+        self.styled()
+    }
+
+    /// The status bar's left-slot note for this Tab.
+    pub fn status_note(&self) -> Option<StatusNote> {
+        if self.large {
+            Some(StatusNote::ReadOnly)
+        } else if self.view == View::Rendered {
+            Some(StatusNote::RenderedView)
+        } else if self.kind() == Kind::Markdown && !self.styled() {
+            Some(StatusNote::StylingOff)
+        } else {
+            None
+        }
+    }
+
+    /// Rereads the Tab's file in place, detecting its encoding.
+    fn reload(&self) -> Action {
+        self.reread(None)
+    }
+
+    fn reread(&self, encoding: Option<Encoding>) -> Action {
+        Action::Load {
+            id: self.id,
+            path: self.path.clone().expect("only files reread"),
+            encoding,
+            keep_caret_line: true,
+        }
+    }
+
+    fn write(&self, path: PathBuf) -> Action {
+        Action::Write {
+            id: self.id,
+            path,
+            encoding: self.encoding,
+            eol: self.eol,
+        }
+    }
+
+    fn is_at(&self, path: &Path) -> bool {
+        self.path.as_deref().is_some_and(|p| same_path(p, path))
+    }
+}
+
+/// Windows path equality: case-insensitive, `/` same as `\`.
+fn same_path(a: &Path, b: &Path) -> bool {
+    let norm = |p: &Path| p.to_string_lossy().replace('/', "\\").to_lowercase();
+    norm(a) == norm(b)
+}
+
+/// Every open Tab, in strip order, and which one is active.
+#[derive(Debug, Default)]
+pub struct Tabs {
+    tabs: Vec<Tab>,
+    active: Option<TabId>,
+    next_id: u64,
+    /// The Tab an `open` wants shown once it has loaded.
+    show_on_load: Option<TabId>,
+    /// A close waiting on saves.
+    pending_close: Option<PendingClose>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PendingClose {
+    /// Save in the Save / Don't save / Cancel dialog.
+    Tab(TabId),
+    /// Save all in the Window's dialog.
+    Window,
+}
+
+impl Tabs {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn get(&self, id: TabId) -> Option<&Tab> {
+        self.tabs.iter().find(|t| t.id == id)
+    }
+
+    /// Every Tab in strip order.
+    pub fn iter(&self) -> impl Iterator<Item = &Tab> {
+        self.tabs.iter()
+    }
+
+    pub fn active(&self) -> Option<TabId> {
+        self.active
+    }
+
+    /// Opens each path in its own Tab, or switches to the Tab that already
+    /// has it. The last path's Tab is shown.
+    pub fn open(&mut self, paths: &[PathBuf]) -> Vec<Action> {
+        let mut actions = Vec::new();
+        for (i, path) in paths.iter().enumerate() {
+            let last = i + 1 == paths.len();
+            if let Some(id) = self.find(path) {
+                if last {
+                    self.show_on_load = None;
+                    actions.extend(self.activate(id));
+                }
+                continue;
+            }
+            let id = self.push(Some(path.clone()), 0);
+            if last {
+                self.show_on_load = Some(id);
+            }
+            actions.push(Action::Load {
+                id,
+                path: path.clone(),
+                encoding: None,
+                keep_caret_line: false,
+            });
+            actions.push(Action::Watch(path.clone()));
+        }
+        actions
+    }
+
+    /// `app` performed an [`Action::Load`].
+    pub fn loaded(&mut self, id: TabId, file: LoadedFile) -> Vec<Action> {
+        let Some(tab) = self.tab_mut(id) else {
+            return Vec::new();
+        };
+        let first = !tab.loaded;
+        let was_large = tab.large;
+        tab.loaded = true;
+        tab.encoding = file.encoding;
+        tab.eol = file.eol;
+        tab.disk = Some(file.stat);
+        tab.text_len = file.text_len;
+        tab.large = file.stat.size > LARGE_FILE_BYTES;
+        tab.unsaved = false;
+        let keep_large_notice = tab.notice == Some(Notice::LargeFile);
+        tab.notice =
+            (tab.large && (first || !was_large || keep_large_notice)).then_some(Notice::LargeFile);
+        if !tab.can_render() {
+            tab.view = View::Source;
+        }
+        let path = tab.path.clone();
+
+        let mut actions = vec![Action::Changed(id)];
+        if self.show_on_load == Some(id) {
+            self.show_on_load = None;
+            self.active = Some(id);
+            actions.push(Action::Activate(id));
+        }
+        if first {
+            actions.extend(path.map(Action::AddRecent));
+        }
+        actions
+    }
+
+    /// `app` could not perform an [`Action::Load`]. A Tab that never loaded
+    /// goes away (an Untitled tab takes the place of the last one); a Tab
+    /// that already shows text keeps it.
+    pub fn load_failed(&mut self, id: TabId) -> Vec<Action> {
+        if self.get(id).is_none_or(|t| t.loaded) {
+            return Vec::new();
+        }
+        if self.show_on_load == Some(id) {
+            self.show_on_load = None;
+        }
+        let mut actions = self.remove(id);
+        if self.tabs.is_empty() {
+            actions.extend(self.new_untitled());
+        }
+        actions
+    }
+
+    /// Adds "Untitled N" at the end, N the lowest number no open Untitled
+    /// tab uses, and makes it active.
+    pub fn new_untitled(&mut self) -> Vec<Action> {
+        let untitled = (1..)
+            .find(|n| {
+                !self
+                    .tabs
+                    .iter()
+                    .any(|t| t.is_untitled() && t.untitled == *n)
+            })
+            .expect("u32 has room");
+        let id = self.push(None, untitled);
+        self.active = Some(id);
+        vec![Action::CreateDocument(id), Action::Activate(id)]
+    }
+
+    /// Attaches the editor document `app` made for this Tab. Returns the
+    /// document `app` must now release: the one it replaces, or `doc` itself
+    /// if the Tab is gone.
+    pub fn set_document(&mut self, id: TabId, doc: EditorDoc) -> Option<EditorDoc> {
+        match self.tab_mut(id) {
+            Some(tab) => tab.document.replace(doc),
+            None => Some(doc),
+        }
+    }
+
+    /// Shows this Tab.
+    pub fn activate(&mut self, id: TabId) -> Vec<Action> {
+        if self.active == Some(id) || self.get(id).is_none() {
+            return Vec::new();
+        }
+        self.active = Some(id);
+        vec![Action::Activate(id)]
+    }
+
+    /// Closes a Tab, or asks Save / Don't save / Cancel if it has unsaved
+    /// edits. Closing the last Tab closes the Window.
+    pub fn close(&mut self, id: TabId) -> Vec<Action> {
+        let Some(tab) = self.get(id) else {
+            return Vec::new();
+        };
+        if tab.unsaved {
+            let mut actions = self.activate(id);
+            actions.push(Action::AskSaveBeforeClose(id));
+            return actions;
+        }
+        self.close_now(id)
+    }
+
+    /// The answer to [`Action::AskSaveBeforeClose`].
+    pub fn close_reply(&mut self, id: TabId, reply: CloseReply) -> Vec<Action> {
+        if self.get(id).is_none() {
+            return Vec::new();
+        }
+        match reply {
+            CloseReply::Save => {
+                self.pending_close = Some(PendingClose::Tab(id));
+                self.save(id)
+            }
+            CloseReply::Discard => self.close_now(id),
+            CloseReply::Cancel => Vec::new(),
+        }
+    }
+
+    /// Closes the Window, or asks once about every unsaved Tab: Save all /
+    /// Discard all / Cancel.
+    pub fn close_window(&mut self) -> Vec<Action> {
+        let unsaved: Vec<TabId> = self
+            .tabs
+            .iter()
+            .filter(|t| t.unsaved)
+            .map(|t| t.id)
+            .collect();
+        if unsaved.is_empty() {
+            vec![Action::CloseWindow]
+        } else {
+            vec![Action::AskSaveAll(unsaved)]
+        }
+    }
+
+    /// The answer to [`Action::AskSaveAll`]. Save all saves the unsaved
+    /// Tabs one at a time, in strip order; an Untitled tab is shown and goes
+    /// through Save As. A cancelled or failed save stops the close.
+    pub fn close_window_reply(&mut self, reply: CloseReply) -> Vec<Action> {
+        match reply {
+            CloseReply::Save => {
+                self.pending_close = Some(PendingClose::Window);
+                self.save_next_for_window()
+            }
+            CloseReply::Discard => vec![Action::CloseWindow],
+            CloseReply::Cancel => Vec::new(),
+        }
+    }
+
+    fn save_next_for_window(&mut self) -> Vec<Action> {
+        let Some(tab) = self.tabs.iter().find(|t| t.unsaved) else {
+            self.pending_close = None;
+            return vec![Action::CloseWindow];
+        };
+        let id = tab.id;
+        let mut actions = Vec::new();
+        if tab.is_untitled() {
+            actions.extend(self.activate(id));
+        }
+        actions.extend(self.save(id));
+        actions
+    }
+
+    /// The text changed; `text_len` is its new length in bytes.
+    pub fn edited(&mut self, id: TabId, text_len: usize) -> Vec<Action> {
+        let Some(tab) = self.tab_mut(id) else {
+            return Vec::new();
+        };
+        if tab.read_only() {
+            return Vec::new();
+        }
+        let before = (tab.unsaved, tab.styled());
+        tab.unsaved = true;
+        tab.text_len = text_len;
+        if (tab.unsaved, tab.styled()) == before {
+            Vec::new()
+        } else {
+            vec![Action::Changed(id)]
+        }
+    }
+
+    /// Writes the Tab to its file; an Untitled tab goes through Save As.
+    pub fn save(&mut self, id: TabId) -> Vec<Action> {
+        let Some(tab) = self.get(id) else {
+            return Vec::new();
+        };
+        match &tab.path {
+            Some(path) => vec![tab.write(path.clone())],
+            None => self.save_as(id),
+        }
+    }
+
+    pub fn save_as(&mut self, id: TabId) -> Vec<Action> {
+        match self.save_as_default(id) {
+            Some(default) => vec![Action::AskSaveAs { id, default }],
+            None => Vec::new(),
+        }
+    }
+
+    /// Where Save As starts: an Untitled tab as `Untitled N.md` in
+    /// Documents, a file as itself in its folder.
+    pub fn save_as_default(&self, id: TabId) -> Option<SaveAsDefault> {
+        let tab = self.get(id)?;
+        Some(match &tab.path {
+            None => SaveAsDefault {
+                folder: SaveAsFolder::Documents,
+                file_name: format!("{}.md", tab.name()),
+            },
+            Some(path) => SaveAsDefault {
+                folder: match path.parent() {
+                    Some(parent) => SaveAsFolder::Folder(parent.to_path_buf()),
+                    None => SaveAsFolder::Documents,
+                },
+                file_name: tab.name(),
+            },
+        })
+    }
+
+    /// The user picked `path` in the Save As dialog.
+    pub fn save_as_chosen(&mut self, id: TabId, path: PathBuf) -> Vec<Action> {
+        match self.get(id) {
+            Some(tab) => vec![tab.write(path)],
+            None => Vec::new(),
+        }
+    }
+
+    /// `app` wrote the Tab to `path` (its own, or a new one from Save As)
+    /// and found `stat` there afterwards, at `now`. The extension decides
+    /// the kind from here on.
+    pub fn saved(&mut self, id: TabId, path: PathBuf, stat: FileStat, now: Instant) -> Vec<Action> {
+        let mut actions = Vec::new();
+        let Some(tab) = self.tab_mut(id) else {
+            return actions;
+        };
+        match tab.path.replace(path.clone()) {
+            Some(old) if same_path(&old, &path) => {}
+            Some(old) => {
+                actions.push(Action::Unwatch(old));
+                actions.push(Action::Watch(path.clone()));
+            }
+            None => actions.push(Action::Watch(path.clone())),
+        }
+        tab.loaded = true;
+        tab.unsaved = false;
+        tab.disk = Some(stat);
+        tab.own_save = Some(now);
+        if matches!(tab.notice, Some(Notice::DiskChange | Notice::DeletedOnDisk)) {
+            tab.notice = None;
+        }
+        if !tab.can_render() {
+            tab.view = View::Source;
+        }
+        actions.push(Action::Changed(id));
+        actions.push(Action::AddRecent(path.clone()));
+
+        // Another Tab on the same file just had it overwritten.
+        let others: Vec<TabId> = self
+            .tabs
+            .iter()
+            .filter(|t| t.id != id && t.is_at(&path))
+            .map(|t| t.id)
+            .collect();
+        for other in others {
+            actions.extend(self.react_to_disk(other, Some(stat), now));
+        }
+
+        match self.pending_close {
+            Some(PendingClose::Tab(waiting)) if waiting == id => {
+                self.pending_close = None;
+                actions.extend(self.close_now(id));
+            }
+            Some(PendingClose::Window) => actions.extend(self.save_next_for_window()),
+            _ => {}
+        }
+        actions
+    }
+
+    /// The watcher reported `path`, and `app` re-checked it: `on_disk` is
+    /// its size and modified time now, `None` if it no longer exists.
+    ///
+    /// Per Tab with that file: nothing if the file is as the Tab knows it
+    /// (which covers scrivi's own saves); a silent reload if the Tab has no
+    /// unsaved edits; otherwise the Disk change Notice. A missing file keeps
+    /// the text, marks it unsaved and shows the deleted-on-disk Notice,
+    /// except within [`OWN_SAVE_WINDOW`] of scrivi's own save, until a stat
+    /// shows that save landed (a replace-style save briefly removes the file).
+    pub fn disk_event(
+        &mut self,
+        path: &Path,
+        on_disk: Option<FileStat>,
+        now: Instant,
+    ) -> Vec<Action> {
+        let ids: Vec<TabId> = self
+            .tabs
+            .iter()
+            .filter(|t| t.is_at(path))
+            .map(|t| t.id)
+            .collect();
+        let mut actions = Vec::new();
+        for id in ids {
+            actions.extend(self.react_to_disk(id, on_disk, now));
+        }
+        actions
+    }
+
+    fn react_to_disk(&mut self, id: TabId, on_disk: Option<FileStat>, now: Instant) -> Vec<Action> {
+        let Some(tab) = self.tab_mut(id) else {
+            return Vec::new();
+        };
+        if !tab.loaded {
+            return Vec::new();
+        }
+        if on_disk == tab.disk {
+            if on_disk.is_some() {
+                tab.own_save = None;
+            }
+            return Vec::new();
+        }
+        let own_save_landing = tab
+            .own_save
+            .is_some_and(|at| now.saturating_duration_since(at) <= OWN_SAVE_WINDOW);
+        if on_disk.is_none() && own_save_landing {
+            return Vec::new();
+        }
+        tab.disk = on_disk;
+        if on_disk.is_none() {
+            tab.unsaved = true;
+            tab.notice = Some(Notice::DeletedOnDisk);
+            vec![Action::Changed(id)]
+        } else if tab.unsaved {
+            tab.notice = Some(Notice::DiskChange);
+            vec![Action::Changed(id)]
+        } else {
+            vec![tab.reload()]
+        }
+    }
+
+    /// A button on the Tab's Notice. Reload drops the edits and rereads the
+    /// file; Keep mine dismisses the Disk change Notice and the next save
+    /// overwrites the file; Save writes a deleted file again.
+    pub fn notice_action(&mut self, id: TabId, action: NoticeAction) -> Vec<Action> {
+        let Some(tab) = self.tab_mut(id) else {
+            return Vec::new();
+        };
+        match (tab.notice, action) {
+            (Some(Notice::DiskChange), NoticeAction::Reload) => vec![tab.reload()],
+            (Some(Notice::DiskChange), NoticeAction::KeepMine)
+            | (Some(Notice::LargeFile), NoticeAction::Dismiss) => {
+                tab.notice = None;
+                vec![Action::Changed(id)]
+            }
+            (Some(Notice::DeletedOnDisk), NoticeAction::Save) => self.save(id),
+            _ => Vec::new(),
+        }
+    }
+
+    /// Line endings ›: converts the whole Tab at once and marks it unsaved.
+    pub fn set_eol(&mut self, id: TabId, eol: Eol) -> Vec<Action> {
+        let Some(tab) = self.tab_mut(id) else {
+            return Vec::new();
+        };
+        if tab.read_only() || tab.eol == eol {
+            return Vec::new();
+        }
+        tab.eol = eol;
+        tab.unsaved = true;
+        vec![Action::ConvertEol { id, eol }, Action::Changed(id)]
+    }
+
+    /// Encoding ›: the next save writes in `encoding`. The Tab is marked
+    /// unsaved, so closing it does not lose the choice.
+    pub fn set_encoding(&mut self, id: TabId, encoding: Encoding) -> Vec<Action> {
+        let Some(tab) = self.tab_mut(id) else {
+            return Vec::new();
+        };
+        if tab.read_only() || tab.encoding == encoding {
+            return Vec::new();
+        }
+        tab.encoding = encoding;
+        tab.unsaved = true;
+        vec![Action::Changed(id)]
+    }
+
+    /// Reopen with encoding…: rereads the file as `encoding`, asking first
+    /// if that would drop unsaved edits.
+    pub fn reopen_with_encoding(&mut self, id: TabId, encoding: Encoding) -> Vec<Action> {
+        match self.get(id) {
+            Some(tab) if tab.is_untitled() => Vec::new(),
+            Some(tab) if tab.unsaved => vec![Action::AskDiscardForReopen { id, encoding }],
+            Some(_) => self.reopen_confirmed(id, encoding),
+            None => Vec::new(),
+        }
+    }
+
+    /// Yes to [`Action::AskDiscardForReopen`].
+    pub fn reopen_confirmed(&mut self, id: TabId, encoding: Encoding) -> Vec<Action> {
+        match self.get(id) {
+            Some(tab) if !tab.is_untitled() => vec![tab.reread(Some(encoding))],
+            _ => Vec::new(),
+        }
+    }
+
+    /// Ctrl+E: switches a Markdown tab between the Source and Rendered
+    /// views. Over the 1 MB rule it only flashes "Too large to render"; in
+    /// a Text file it does nothing.
+    pub fn toggle_view(&mut self, id: TabId) -> Vec<Action> {
+        let Some(tab) = self.tab_mut(id) else {
+            return Vec::new();
+        };
+        match tab.view {
+            View::Rendered => tab.view = View::Source,
+            View::Source if tab.can_render() => tab.view = View::Rendered,
+            View::Source if tab.kind() == Kind::Markdown => {
+                return vec![Action::Flash(StatusNote::TooLargeToRender)]
+            }
+            View::Source => return Vec::new(),
+        }
+        vec![Action::Changed(id)]
+    }
+
+    /// Some Tab is in the Rendered view, so WebView2 must exist.
+    pub fn any_rendered(&self) -> bool {
+        self.tabs.iter().any(|t| t.view == View::Rendered)
+    }
+
+    /// Ctrl+Tab: the next Tab, wrapping around.
+    pub fn next(&mut self) -> Vec<Action> {
+        self.step(1)
+    }
+
+    /// Ctrl+Shift+Tab: the previous Tab, wrapping around.
+    pub fn prev(&mut self) -> Vec<Action> {
+        self.step(self.tabs.len().saturating_sub(1))
+    }
+
+    fn step(&mut self, by: usize) -> Vec<Action> {
+        let Some(at) = self.tabs.iter().position(|t| Some(t.id) == self.active) else {
+            return Vec::new();
+        };
+        let id = self.tabs[(at + by) % self.tabs.len()].id;
+        self.activate(id)
+    }
+
+    /// The Save As dialog was cancelled, or the write failed (`app` shows
+    /// why). A close waiting on this save is called off.
+    pub fn save_failed(&mut self, _id: TabId) -> Vec<Action> {
+        self.pending_close = None;
+        Vec::new()
+    }
+
+    fn close_now(&mut self, id: TabId) -> Vec<Action> {
+        let mut actions = self.remove(id);
+        if self.tabs.is_empty() {
+            actions.push(Action::CloseWindow);
+        }
+        actions
+    }
+
+    /// Takes a Tab out of the strip. If it was active, its right neighbour
+    /// (else its left one) is shown.
+    fn remove(&mut self, id: TabId) -> Vec<Action> {
+        let Some(at) = self.tabs.iter().position(|t| t.id == id) else {
+            return Vec::new();
+        };
+        let tab = self.tabs.remove(at);
+        let mut actions = vec![Action::Closed {
+            id,
+            document: tab.document,
+        }];
+        if let Some(path) = tab.path {
+            actions.push(Action::Unwatch(path));
+        }
+        if self.tabs.is_empty() {
+            self.active = None;
+        } else if self.active == Some(id) {
+            let next = self.tabs[at.min(self.tabs.len() - 1)].id;
+            self.active = Some(next);
+            actions.push(Action::Activate(next));
+        }
+        actions
+    }
+
+    /// Appends a fresh Tab with the defaults for new files: UTF-8, LF.
+    fn push(&mut self, path: Option<PathBuf>, untitled: u32) -> TabId {
+        self.next_id += 1;
+        let id = TabId(self.next_id);
+        self.tabs.push(Tab {
+            id,
+            path,
+            untitled,
+            document: None,
+            unsaved: false,
+            view: View::Source,
+            notice: None,
+            encoding: Encoding::Utf8,
+            eol: Eol::Lf,
+            large: false,
+            text_len: 0,
+            loaded: false,
+            disk: None,
+            own_save: None,
+        });
+        id
+    }
+
+    fn find(&self, path: &Path) -> Option<TabId> {
+        self.tabs.iter().find(|t| t.is_at(path)).map(|t| t.id)
+    }
+
+    fn tab_mut(&mut self, id: TabId) -> Option<&mut Tab> {
+        self.tabs.iter_mut().find(|t| t.id == id)
+    }
+}
+
+#[cfg(test)]
+mod tests;
