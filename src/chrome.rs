@@ -1,9 +1,10 @@
 //! Title row, Notices, find bar and status bar: pure layout and hit testing, plus drawing (spec §4).
 
 pub mod notice;
+pub mod findbar;
 mod paint;
 
-pub use paint::{Painter, TabView, View};
+pub use paint::{FindView, Painter, TabView, View};
 
 /// A rectangle in client pixels; `right` and `bottom` are exclusive.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

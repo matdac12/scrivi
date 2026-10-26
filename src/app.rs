@@ -39,7 +39,7 @@ use windows::Win32::UI::Controls::{
 use windows::Win32::UI::HiDpi::{GetDpiForWindow, GetSystemMetricsForDpi};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     GetCapture, ReleaseCapture, SetCapture, SetFocus, TrackMouseEvent, TME_LEAVE, TME_NONCLIENT, TRACKMOUSEEVENT,
-    VK_TAB,
+    VK_ADD, VK_NUMPAD0, VK_OEM_MINUS, VK_OEM_PLUS, VK_SUBTRACT, VK_TAB,
 };
 use windows::Win32::UI::Shell::{SHAppBarMessage, ABE_BOTTOM, ABE_LEFT, ABE_RIGHT, ABE_TOP, ABM_GETAUTOHIDEBAREX, APPBARDATA};
 use windows::Win32::UI::WindowsAndMessaging::*;
@@ -58,6 +58,8 @@ use crate::textfile::{self, Encoding, Eol};
 // SCRIVI-16: opening and saving, the menus. New code lives in these files.
 mod atomic;
 mod files;
+mod find;
+mod findview;
 mod menu;
 mod notice;
 mod recent;
@@ -346,6 +348,19 @@ fn accelerators() -> HACCEL {
         ACCEL { fVirt: ctrl, key: key(b'S'), cmd: cmd::SAVE },
         ACCEL { fVirt: ctrl | FSHIFT, key: key(b'S'), cmd: cmd::SAVE_AS },
         ACCEL { fVirt: ctrl, key: key(b'E'), cmd: cmd::RENDERED_VIEW },
+        // Find, wrap and zoom (SCRIVI-20). Ctrl++ is the plus key on layouts
+        // where it is unshifted, and Shift and the = key on the others.
+        ACCEL { fVirt: ctrl, key: key(b'F'), cmd: cmd::FIND },
+        ACCEL { fVirt: ctrl, key: key(b'H'), cmd: cmd::REPLACE },
+        ACCEL { fVirt: ctrl, key: key(b'G'), cmd: cmd::GO_TO_LINE },
+        ACCEL { fVirt: FALT | FVIRTKEY, key: key(b'Z'), cmd: cmd::WORD_WRAP },
+        ACCEL { fVirt: ctrl, key: VK_OEM_PLUS.0, cmd: cmd::ZOOM_IN },
+        ACCEL { fVirt: ctrl | FSHIFT, key: VK_OEM_PLUS.0, cmd: cmd::ZOOM_IN },
+        ACCEL { fVirt: ctrl, key: VK_ADD.0, cmd: cmd::ZOOM_IN },
+        ACCEL { fVirt: ctrl, key: VK_OEM_MINUS.0, cmd: cmd::ZOOM_OUT },
+        ACCEL { fVirt: ctrl, key: VK_SUBTRACT.0, cmd: cmd::ZOOM_OUT },
+        ACCEL { fVirt: ctrl, key: key(b'0'), cmd: cmd::ZOOM_RESET },
+        ACCEL { fVirt: ctrl, key: VK_NUMPAD0.0, cmd: cmd::ZOOM_RESET },
     ];
     unsafe { CreateAcceleratorTableW(&table) }.unwrap_or_default()
 }
@@ -612,6 +627,7 @@ fn show(a: &App, id: TabId) {
     let view = a.views.borrow().get(&id).copied().unwrap_or_default();
     a.editor.restore_view(&view);
     restyle(a);
+    find::on_show(a);
     refresh_status(a);
 }
 
@@ -657,8 +673,7 @@ fn apply_settings(a: &App, id: TabId) {
     let (eol, read_only, wrap) = settings;
     a.editor.set_eol_mode(eol);
     a.editor.set_read_only(read_only);
-    // 12: Alt+Z and the remembered choice; until then wrap is on where allowed.
-    a.editor.set_wrap(wrap);
+    a.editor.set_wrap(wrap && findview::wrap_wanted());
 }
 
 /// Run `f` on `doc` in the editor, then show the shown Tab again.
@@ -903,6 +918,7 @@ fn relayout(a: &App) {
             menu_text: ui.menu_text,
             maximized,
             resize_border: border,
+            find_h: find::band_height(),
             ..Frame::default()
         };
         let mut layout = Layout::new(&frame);
@@ -920,6 +936,7 @@ fn relayout(a: &App) {
     };
     a.editor.move_to(editor);
     webview::set_bounds(rect_of(editor));
+    find::place(a);
     invalidate(a, None);
 }
 
@@ -1073,6 +1090,7 @@ fn paint(a: &App) {
     let painted = unsafe {
         let mut ps = PAINTSTRUCT::default();
         let hdc = BeginPaint(a.hwnd, &mut ps);
+        let find = find::view(a);
         let painted = {
             let ui = a.ui.borrow();
             let tabs = a.tabs.borrow();
@@ -1094,6 +1112,7 @@ fn paint(a: &App) {
                 // Dragged off its button, a press no longer shows.
                 pressed: ui.pressed.filter(|p| ui.hover == Some(*p)),
                 active: ui.active,
+                find: find.as_ref(),
             };
             a.painter.borrow_mut().paint(hdc, &ps.rcPaint, &view)
         };
@@ -1231,6 +1250,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                     Hit::TabClose(_) | Hit::NewTab | Hit::ScrollLeft | Hit::ScrollRight => press(a, hit),
                     // A native menu bar opens on the way down.
                     Hit::Menu(i) => menu::open(a, i, false),
+                    Hit::Find => find::click(a, x, y),
                     _ => {}
                 }
                 LRESULT(0)
@@ -1281,14 +1301,24 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                 let (x, y) = xy(lp);
                 let hit = a.ui.borrow().layout.hit_test(x, y);
                 set_hover(a, Some(hit).filter(|h| h.lights_up()));
+                if hit == Hit::Find {
+                    find::hover(a, x, y);
+                } else {
+                    find::leave(a);
+                }
                 LRESULT(0)
             }
             WM_MOUSELEAVE => {
                 a.ui.borrow_mut().tracking = false;
                 set_hover(a, None);
+                find::leave(a);
                 LRESULT(0)
             }
             WM_COMMAND => {
+                // The find bar's inputs tell us about typing and focus.
+                if find::control_notify(a, wp, lp) {
+                    return LRESULT(0);
+                }
                 match (wp.0 & 0xffff) as u16 {
                     cmd::NEW_TAB => command(a, Tabs::new_untitled),
                     cmd::CLOSE_TAB => command(a, |t| t.active().map_or_else(Vec::new, |id| t.close(id))),
@@ -1318,6 +1348,8 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                     recent::flush(hwnd);
                 } else if timer == TIMER_SPELL {
                     spellcheck(a);
+                } else if timer == proto::TIMER_FIND {
+                    find::timer(a);
                 } else if timer == FLASH_TIMER {
                     let status = {
                         let mut ui = a.ui.borrow_mut();
@@ -1433,6 +1465,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                                 command(a, |t| t.edited(id, len));
                                 a.styled.borrow_mut().touch(id);
                                 arm_restyle(a);
+                                find::edited(a);
                             }
                         }
                         _ => {}

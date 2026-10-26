@@ -35,6 +35,7 @@ pub mod sci {
     pub const SCI_SELECTALL: u32 = 2013;
     pub const SCI_SETSAVEPOINT: u32 = 2014;
     pub const SCI_CANREDO: u32 = 2016;
+    pub const SCI_GOTOLINE: u32 = 2024;
     pub const SCI_GOTOPOS: u32 = 2025;
     pub const SCI_SETANCHOR: u32 = 2026;
     pub const SCI_CONVERTEOLS: u32 = 2029;
@@ -53,11 +54,15 @@ pub mod sci {
     pub const SCI_STYLESETSIZEFRACTIONAL: u32 = 2061;
     pub const SCI_STYLESETWEIGHT: u32 = 2063;
     pub const SCI_SETSTYLINGEX: u32 = 2073;
+    pub const SCI_BEGINUNDOACTION: u32 = 2078;
+    pub const SCI_ENDUNDOACTION: u32 = 2079;
     pub const SCI_INDICSETSTYLE: u32 = 2080;
     pub const SCI_INDICSETFORE: u32 = 2082;
     pub const SCI_SETCARETLINEVISIBLE: u32 = 2096;
     pub const SCI_SETHSCROLLBAR: u32 = 2130;
     pub const SCI_SETCURRENTPOS: u32 = 2141;
+    pub const SCI_GETSELECTIONSTART: u32 = 2143;
+    pub const SCI_GETSELECTIONEND: u32 = 2145;
     pub const SCI_GETFIRSTVISIBLELINE: u32 = 2152;
     pub const SCI_GETLINECOUNT: u32 = 2154;
     pub const SCI_SETMARGINLEFT: u32 = 2155;
@@ -65,6 +70,9 @@ pub mod sci {
     pub const SCI_GETMODIFY: u32 = 2159;
     pub const SCI_LINEFROMPOSITION: u32 = 2166;
     pub const SCI_POSITIONFROMLINE: u32 = 2167;
+    pub const SCI_SETSEL: u32 = 2160;
+    pub const SCI_GETSELTEXT: u32 = 2161;
+    pub const SCI_SCROLLCARET: u32 = 2169;
     pub const SCI_SETREADONLY: u32 = 2171;
     pub const SCI_CANPASTE: u32 = 2173;
     pub const SCI_CANUNDO: u32 = 2174;
@@ -73,10 +81,17 @@ pub mod sci {
     pub const SCI_CUT: u32 = 2177;
     pub const SCI_COPY: u32 = 2178;
     pub const SCI_PASTE: u32 = 2179;
+    pub const SCI_SETTARGETSTART: u32 = 2190;
+    pub const SCI_GETTARGETSTART: u32 = 2191;
+    pub const SCI_GETTARGETEND: u32 = 2193;
+    pub const SCI_REPLACETARGET: u32 = 2194;
+    pub const SCI_SEARCHINTARGET: u32 = 2197;
+    pub const SCI_SETSEARCHFLAGS: u32 = 2198;
     pub const SCI_GETDIRECTFUNCTION: u32 = 2184;
     pub const SCI_GETDIRECTPOINTER: u32 = 2185;
     pub const SCI_SETCARETWIDTH: u32 = 2188;
     pub const SCI_VISIBLEFROMDOCLINE: u32 = 2220;
+    pub const SCI_ENSUREVISIBLE: u32 = 2232;
     pub const SCI_DOCLINEFROMVISIBLE: u32 = 2221;
     pub const SCI_SETMARGINTYPEN: u32 = 2240;
     pub const SCI_SETMARGINWIDTHN: u32 = 2242;
@@ -87,6 +102,10 @@ pub mod sci {
     pub const SCI_GETDOCPOINTER: u32 = 2357;
     pub const SCI_SETDOCPOINTER: u32 = 2358;
     pub const SCI_SETMODEVENTMASK: u32 = 2359;
+    pub const SCI_ZOOMIN: u32 = 2333;
+    pub const SCI_ZOOMOUT: u32 = 2334;
+    pub const SCI_LINESONSCREEN: u32 = 2370;
+    pub const SCI_SETZOOM: u32 = 2373;
     pub const SCI_GETZOOM: u32 = 2374;
     pub const SCI_CREATEDOCUMENT: u32 = 2375;
     pub const SCI_RELEASEDOCUMENT: u32 = 2377;
@@ -94,6 +113,11 @@ pub mod sci {
     pub const SCI_GETXOFFSET: u32 = 2398;
     pub const SCI_ALLOCATE: u32 = 2446;
     pub const SCI_SETWRAPINDENTMODE: u32 = 2472;
+    pub const SCI_INDICSETUNDER: u32 = 2510;
+    pub const SCI_INDICSETALPHA: u32 = 2523;
+    pub const SCI_INDICSETOUTLINEALPHA: u32 = 2558;
+    pub const SCI_SETFIRSTVISIBLELINE: u32 = 2613;
+    pub const SCI_SETTARGETRANGE: u32 = 2686;
     pub const SCI_SETINDICATORCURRENT: u32 = 2500;
     pub const SCI_INDICATORFILLRANGE: u32 = 2504;
     pub const SCI_INDICATORCLEARRANGE: u32 = 2505;
@@ -134,6 +158,8 @@ pub mod sci {
     pub const SC_MOD_INSERTTEXT: i32 = 0x1;
     pub const SC_MOD_DELETETEXT: i32 = 0x2;
     pub const INDIC_STRIKE: isize = 4;
+    pub const INDIC_ROUNDBOX: isize = 7;
+    pub const SCFIND_MATCHCASE: usize = 4;
     pub const SC_MOD_EDITS: usize = (SC_MOD_INSERTTEXT | SC_MOD_DELETETEXT) as usize;
     pub const SCN_STYLENEEDED: u32 = 2000;
     pub const SCN_SAVEPOINTREACHED: u32 = 2002;
@@ -453,6 +479,101 @@ impl Editor {
                 SWP_NOZORDER | SWP_NOACTIVATE,
             );
         }
+    }
+}
+
+/// The indicators of the find bar's matches: every match, and the current one
+/// over it. 8 is the markdown strike (`mdview`); these stay clear of it and
+/// of anything a later ticket takes just above it.
+pub const MATCH_INDICATOR: usize = 20;
+pub const CURRENT_INDICATOR: usize = 21;
+/// Pale and strong yellow, the mockup's `.hit` and `.hit.cur`.
+const MATCH_INK: u32 = 0xFFE58F;
+const CURRENT_INK: u32 = 0xF5B83D;
+
+impl Editor {
+    /// Look of the match indicators: boxes under the text.
+    pub fn define_find_indicators(&self) {
+        for (id, ink) in [(MATCH_INDICATOR, MATCH_INK), (CURRENT_INDICATOR, CURRENT_INK)] {
+            self.call(SCI_INDICSETSTYLE, id, INDIC_ROUNDBOX);
+            self.call(SCI_INDICSETFORE, id, rgb(ink));
+            self.call(SCI_INDICSETUNDER, id, 1);
+            self.call(SCI_INDICSETALPHA, id, 255);
+            self.call(SCI_INDICSETOUTLINEALPHA, id, 0);
+        }
+    }
+
+    /// Mark `ranges` with `indicator`.
+    pub fn mark_ranges<'a>(&self, indicator: usize, ranges: impl IntoIterator<Item = &'a std::ops::Range<usize>>) {
+        self.call(SCI_SETINDICATORCURRENT, indicator, 0);
+        for r in ranges {
+            self.call(SCI_INDICATORFILLRANGE, r.start, (r.end - r.start) as isize);
+        }
+    }
+
+    /// The strong mark of the current match: on `r` alone, or on nothing.
+    pub fn set_current_mark(&self, r: Option<&std::ops::Range<usize>>) {
+        self.call(SCI_SETINDICATORCURRENT, CURRENT_INDICATOR, 0);
+        self.call(SCI_INDICATORCLEARRANGE, 0, self.text_len() as isize);
+        if let Some(r) = r {
+            self.call(SCI_INDICATORFILLRANGE, r.start, (r.end - r.start) as isize);
+        }
+    }
+
+    /// Remove both match indicators from the shown document.
+    pub fn clear_find_marks(&self) {
+        let len = self.text_len() as isize;
+        for id in [MATCH_INDICATOR, CURRENT_INDICATOR] {
+            self.call(SCI_SETINDICATORCURRENT, id, 0);
+            self.call(SCI_INDICATORCLEARRANGE, 0, len);
+        }
+    }
+
+    /// The selection, low to high (empty at the caret).
+    pub fn selection(&self) -> std::ops::Range<usize> {
+        self.call(SCI_GETSELECTIONSTART, 0, 0) as usize..self.call(SCI_GETSELECTIONEND, 0, 0) as usize
+    }
+
+    /// Select `r` and scroll it into view; the focus stays where it is.
+    pub fn select(&self, r: &std::ops::Range<usize>) {
+        self.call(SCI_SETSEL, r.start, r.end as isize);
+        self.call(SCI_SCROLLCARET, 0, 0);
+    }
+
+    /// The selected text, if it fits on one line and is of a size to search for.
+    pub fn selected_word(&self, max_bytes: usize) -> Option<String> {
+        let sel = self.selection();
+        if sel.is_empty() || sel.len() > max_bytes {
+            return None;
+        }
+        let mut buf = vec![0u8; sel.len() + 1];
+        self.call(SCI_GETSELTEXT, 0, buf.as_mut_ptr() as isize);
+        buf.truncate(sel.len());
+        String::from_utf8(buf).ok().filter(|s| !s.contains(['\r', '\n']))
+    }
+
+    /// Put the caret at the start of `line` (0-based) and the line in the
+    /// middle of the view.
+    pub fn go_to_line(&self, line: usize) {
+        self.call(SCI_ENSUREVISIBLE, line, 0);
+        self.call(SCI_GOTOLINE, line, 0);
+        let shown = self.call(SCI_VISIBLEFROMDOCLINE, line, 0);
+        let rows = self.call(SCI_LINESONSCREEN, 0, 0);
+        self.call(SCI_SETFIRSTVISIBLELINE, (shown - rows / 2).max(0) as usize, 0);
+    }
+
+    /// One zoom step; Scintilla keeps it between its own limits.
+    pub fn zoom_step(&self, out: bool) {
+        self.call(if out { SCI_ZOOMOUT } else { SCI_ZOOMIN }, 0, 0);
+    }
+
+    /// Zoom in points added to the font size; 0 is 100 %.
+    pub fn zoom_points(&self) -> i32 {
+        self.call(SCI_GETZOOM, 0, 0) as i32
+    }
+
+    pub fn set_zoom_points(&self, points: i32) {
+        self.call(SCI_SETZOOM, points as usize, 0);
     }
 }
 
