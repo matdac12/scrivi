@@ -437,23 +437,55 @@ mod tests {
         assert!(!html.contains("type=\"text\""), "{html}");
     }
 
-    #[test]
-    fn ten_thousand_duplicate_headings_are_named_fast() {
+    /// Name `n` copies of one heading: how long it took, and the last id given.
+    fn name_copies(n: usize) -> (std::time::Duration, Option<String>) {
         let md = "# a
 "
-        .repeat(10_000);
+        .repeat(n);
         let mut events: Vec<Event> = Parser::new(&md).collect();
         let start = std::time::Instant::now();
         name_headings(&mut events);
-        assert!(
-            start.elapsed() < std::time::Duration::from_millis(100),
-            "{:?}",
-            start.elapsed()
-        );
+        let elapsed = start.elapsed();
         let last = events.iter().rev().find_map(|e| match e {
-            Event::Start(Tag::Heading { id, .. }) => id.clone(),
+            Event::Start(Tag::Heading { id, .. }) => id.as_ref().map(|id| id.to_string()),
             _ => None,
         });
+        (elapsed, last)
+    }
+
+    /// The fastest of `tries` runs: a slow sample means the machine was busy,
+    /// not that naming got slower.
+    fn fastest_naming(n: usize, tries: usize) -> (std::time::Duration, Option<String>) {
+        (0..tries)
+            .map(|_| name_copies(n))
+            .min_by_key(|(elapsed, _)| *elapsed)
+            .unwrap()
+    }
+
+    #[test]
+    fn ten_thousand_duplicate_headings_are_named_in_linear_time() {
+        // Ten times the headings is about ten times the work when naming is
+        // linear, and far more when it looks through every id already taken
+        // (SCRIVI-21's quadratic slug loop: seconds at a thousand headings).
+        // Comparing the two sizes instead of one absolute limit keeps a busy
+        // machine from failing the test: load slows both runs alike.
+        let (one_thousand, _) = fastest_naming(1_000, 3);
+        // Catches a quadratic slug loop before the 10k run below, which would
+        // take hours with one. A linear run is a few milliseconds even on a
+        // loaded machine.
+        assert!(
+            one_thousand < std::time::Duration::from_millis(500),
+            "1k: {one_thousand:?}"
+        );
+        let (ten_thousand, last) = fastest_naming(10_000, 3);
+        // Linear is about 10x; quadratic about 100x. 40x leaves room for the
+        // machine's load while missing nothing like the old loop, which was
+        // thousands of times slower.
+        let limit = one_thousand * 40;
+        assert!(
+            ten_thousand < limit,
+            "1k: {one_thousand:?}, 10k: {ten_thousand:?}, limit: {limit:?}"
+        );
         assert_eq!(last.as_deref(), Some("a-9999"));
     }
 

@@ -89,8 +89,9 @@ impl Drop for Resident {
     }
 }
 
-/// Send menu commands to the Window, then wait until `file` was written again.
-fn command_and_wait_for_save(file: &Path, commands: &[usize]) {
+/// Send menu commands to the Window, then wait until `file` was written again
+/// and read its bytes back.
+fn command_and_wait_for_save(file: &Path, commands: &[usize]) -> Vec<u8> {
     let long_ago = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000_000);
     std::fs::File::options()
         .write(true)
@@ -102,11 +103,34 @@ fn command_and_wait_for_save(file: &Path, commands: &[usize]) {
     for id in commands {
         unsafe { PostMessageW(Some(hwnd), WM_COMMAND, WPARAM(*id), LPARAM(0)) }.unwrap();
     }
+    read_settled(file, long_ago)
+}
+
+/// The bytes of `file`, once it was written after `since` and has settled.
+///
+/// A save swaps a new file in for the old one (`src/app/atomic.rs`), and while
+/// it does, Windows reports the path missing (`ERROR_FILE_NOT_FOUND`) or in use
+/// (`ERROR_SHARING_VIOLATION`) even though the save's own modified time is
+/// already showing (SCRIVI-32: reading on that time alone failed at random
+/// under load). So the file is taken for written only when two reads in a row
+/// have found the same bytes; the first read before the swap can't count as
+/// the save's result.
+fn read_settled(file: &Path, since: SystemTime) -> Vec<u8> {
+    let mut previous: Option<Vec<u8>> = None;
+    let mut settled = None;
     wait_until(&format!("{} saved", file.display()), || {
-        std::fs::metadata(file)
+        let now = std::fs::read(file).ok();
+        let written = std::fs::metadata(file)
             .and_then(|m| m.modified())
-            .is_ok_and(|t| t != long_ago)
+            .is_ok_and(|t| t != since);
+        settled = match (&previous, &now) {
+            (Some(before), Some(now)) if written && before == now => Some(now.clone()),
+            _ => None,
+        };
+        previous = now;
+        settled.is_some()
     });
+    settled.expect("the bytes of a settled file")
 }
 
 #[test]
@@ -148,16 +172,15 @@ fn saving_writes_unedited_files_back_byte_for_byte_and_converts_line_endings() {
     // File › Save on each, unedited: the same bytes.
     for (path, bytes) in &files {
         run.show(path);
-        command_and_wait_for_save(path, &[SAVE]);
-        assert_eq!(&std::fs::read(path).unwrap(), bytes, "{}", path.display());
+        let saved = command_and_wait_for_save(path, &[SAVE]);
+        assert_eq!(&saved, bytes, "{}", path.display());
     }
 
     // File › Line endings › LF, then Save: the CRLF file is LF now.
     let crlf = &files[2].0;
     run.show(crlf);
-    command_and_wait_for_save(crlf, &[EOL_LF, SAVE]);
     assert_eq!(
-        std::fs::read(crlf).unwrap(),
+        command_and_wait_for_save(crlf, &[EOL_LF, SAVE]),
         b"# Title\n\n- one\n- two\nno final break"
     );
 
@@ -180,5 +203,43 @@ fn saving_writes_unedited_files_back_byte_for_byte_and_converts_line_endings() {
 
     drop(resident_process);
     wait_until("the window to go away", || resident().is_none());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A file a save is swapping in can't be read for a moment, though its times
+/// can still be asked for. Reading before the swap is over must wait for it:
+/// this is the random failure SCRIVI-32 fixed (an exclusive hold, as
+/// `ReplaceFileW`'s).
+#[test]
+fn a_file_a_save_is_swapping_in_is_read_once_it_settles() {
+    use std::os::windows::fs::OpenOptionsExt;
+    let dir = std::env::temp_dir().join(format!("scrivi-save-settling-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("doc.txt");
+    std::fs::write(&path, b"the saved bytes").unwrap();
+    // FILE_SHARE_WRITE | FILE_SHARE_DELETE: a read is refused, the file's
+    // times are not, which is the window a save leaves.
+    let held = std::fs::OpenOptions::new()
+        .read(true)
+        .share_mode(0x2 | 0x4)
+        .open(&path)
+        .unwrap();
+    assert!(
+        std::fs::read(&path).is_err(),
+        "the hold has to refuse a read"
+    );
+    assert!(
+        std::fs::metadata(&path).is_ok(),
+        "but not asking for its times"
+    );
+    let releasing = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(100));
+        drop(held);
+    });
+    // Long past, as the time is after a save has changed it.
+    let since = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000_000);
+    assert_eq!(read_settled(&path, since), b"the saved bytes");
+    releasing.join().unwrap();
     let _ = std::fs::remove_dir_all(&dir);
 }
