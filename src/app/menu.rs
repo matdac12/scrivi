@@ -63,11 +63,6 @@ fn always(_: &State) -> bool {
     true
 }
 
-/// Waits for a later ticket (13): shown greyed.
-fn later(_: &State) -> bool {
-    false
-}
-
 fn writable(s: &State) -> bool {
     !s.read_only
 }

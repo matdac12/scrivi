@@ -919,7 +919,6 @@ fn relayout(a: &App) {
             maximized,
             resize_border: border,
             find_h: find::band_height(),
-            ..Frame::default()
         };
         let mut layout = Layout::new(&frame);
         // A newly active Tab, or a new width, scrolls the active Tab into view;

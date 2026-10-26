@@ -177,7 +177,7 @@ fn edit_commands_follow_the_editor() {
 }
 
 #[test]
-fn find_replace_go_to_line_and_the_view_menu_are_on_but_the_rendered_view_waits() {
+fn find_replace_go_to_line_and_the_view_menu_are_on() {
     // Even a read-only Tab can be searched.
     let edit = items(EDIT, &State { read_only: true, ..state() });
     assert_eq!(labels(&edit)[7..], ["-", "Find…\tCtrl+F", "Replace…\tCtrl+H", "Go to line…\tCtrl+G"]);
@@ -196,8 +196,6 @@ fn find_replace_go_to_line_and_the_view_menu_are_on_but_the_rendered_view_waits(
             "Reset zoom\tCtrl+0"
         ]
     );
-    // Only the Rendered view (13) is still greyed.
-    assert!(!enabled(&view, cmd::RENDERED_VIEW));
     for id in [cmd::WORD_WRAP, cmd::ZOOM_IN, cmd::ZOOM_OUT, cmd::ZOOM_RESET] {
         assert!(enabled(&view, id), "{id}");
     }
