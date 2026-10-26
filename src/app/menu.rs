@@ -16,7 +16,7 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 };
 use windows::Win32::UI::WindowsAndMessaging::*;
 
-use super::{app, cmd, command, files, invalidate, rehover, wide, App};
+use super::{app, cmd, command, files, invalidate, recent, rehover, wide, App};
 use crate::chrome::Hit;
 use crate::editor::sci;
 use crate::tabs::{Action, TabId, Tabs};
@@ -68,8 +68,7 @@ fn writable(s: &State) -> bool {
 pub const FILE: &[Entry] = &[
     Entry::Command { label: "&New tab", keys: "Ctrl+T", id: cmd::NEW_TAB, enabled: always },
     Entry::Command { label: "&Open\u{2026}", keys: "Ctrl+O", id: cmd::OPEN, enabled: always },
-    // 15 fills it.
-    Entry::Sub { label: "Recent &files", enabled: later, items: |_| Vec::new() },
+    Entry::Sub { label: "Recent &files", enabled: |_| recent::any(), items: |_| recent::menu_items() },
     Entry::Separator,
     Entry::Command { label: "&Save", keys: "Ctrl+S", id: cmd::SAVE, enabled: always },
     Entry::Command { label: "Save &as\u{2026}", keys: "Ctrl+Shift+S", id: cmd::SAVE_AS, enabled: always },
@@ -714,6 +713,7 @@ pub fn run(a: &App, id: u16) -> bool {
         // 12 and 13 wire these; their items are greyed until then.
         cmd::FIND | cmd::REPLACE | cmd::GO_TO_LINE => {}
         cmd::RENDERED_VIEW | cmd::WORD_WRAP | cmd::ZOOM_IN | cmd::ZOOM_OUT | cmd::ZOOM_RESET => {}
+        _ if recent::is_command(id) => recent::open(a, id),
         _ => return false,
     }
     true
