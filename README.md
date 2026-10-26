@@ -40,6 +40,11 @@ before updating; the script refuses to overwrite a running copy.
 `scrivi.exe --unregister` removes exactly what `--register` wrote. Both only
 touch HKCU.
 
+`scrivi.exe --help` (also `-h`) prints the flags scrivi takes. `--` ends them,
+so `scrivi.exe -- --notes.md` opens a file whose name looks like a flag; any
+other `--flag` scrivi does not know prints the usage and exits 2. A plain path,
+which is what Explorer hands it on a double-click, opens as always.
+
 ### From source
 
 ```
@@ -48,8 +53,8 @@ cd scrivi
 powershell -ExecutionPolicy Bypass -File scripts\install.ps1
 ```
 
-The script builds with `cargo build --release` (Rust 1.99.1, pinned by
-`rust-toolchain.toml`), then installs as above.
+The script builds with `cargo build --release` using the Rust version pinned in
+`rust-toolchain.toml`, then installs as above.
 
 ## Usage
 
