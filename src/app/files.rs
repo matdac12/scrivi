@@ -466,7 +466,9 @@ mod tests {
 
     /// Open a 200 MB log the way `Action::Load` does (read, decode, create the
     /// document, fill it) in a real, never shown Scintilla control. Run:
-    /// `SCRIVI_TIMING_FILE=<path> cargo test --release load_timing -- --ignored --nocapture`.
+    /// `SCRIVI_TIMING_FILE=<path> [SCRIVI_TIMING_RUNS=n] cargo test --release load_timing -- --ignored --nocapture`.
+    /// The first line is a cold load; later lines reuse the allocator, so under
+    /// load the lowest `total_ms` is the fairest number to compare.
     #[test]
     #[ignore]
     fn load_timing() {
@@ -475,25 +477,82 @@ mod tests {
         use windows::Win32::System::LibraryLoader::GetModuleHandleW;
         use windows::Win32::UI::WindowsAndMessaging::HWND_MESSAGE;
         let path = PathBuf::from(std::env::var("SCRIVI_TIMING_FILE").expect("SCRIVI_TIMING_FILE"));
+        let runs: usize = std::env::var("SCRIVI_TIMING_RUNS")
+            .ok()
+            .and_then(|n| n.parse().ok())
+            .unwrap_or(1);
         let hinstance = unsafe { GetModuleHandleW(None).unwrap() }.into();
         assert!(Editor::register_class(hinstance));
         let parent: HWND = HWND_MESSAGE;
         let e = Editor::create(parent, hinstance, 96).expect("editor");
+        for run in 1..=runs {
+            let t = Instant::now();
+            let (bytes, stat) = super::super::read_file(&path).unwrap();
+            let read = t.elapsed().as_secs_f64() * 1e3;
+            let t2 = Instant::now();
+            let decoded = textfile::decode_owned(bytes, 1252);
+            let decode = t2.elapsed().as_secs_f64() * 1e3;
+            let large = textfile::is_large(stat.size);
+            let doc = e.create_document(large);
+            e.show_document(doc);
+            e.set_eol_mode(decoded.eol);
+            let t3 = Instant::now();
+            e.fill(&decoded.text, large);
+            let fill = t3.elapsed().as_secs_f64() * 1e3;
+            let total = t.elapsed().as_secs_f64() * 1e3;
+            eprintln!(
+                "TIMING mb={} large={large} enc={} eol={} run={run} read_ms={read:.1} decode_ms={decode:.1} fill_ms={fill:.1} total_ms={total:.1} bytes={}",
+                stat.size / (1024 * 1024),
+                decoded.encoding,
+                decoded.eol,
+                e.text_len()
+            );
+            e.release_document(doc);
+        }
+    }
+
+    /// The passes inside `decode_owned`, timed apart on the same file: only for
+    /// choosing what to optimise, not part of the load path. Run:
+    /// `SCRIVI_TIMING_FILE=<path> cargo test --release decode_steps -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn decode_steps() {
+        use std::io::Read;
+        use std::time::Instant;
+        let path = PathBuf::from(std::env::var("SCRIVI_TIMING_FILE").expect("SCRIVI_TIMING_FILE"));
+        let bytes = std::fs::read(&path).unwrap();
         let t = Instant::now();
-        let (bytes, stat) = super::super::read_file(&path).unwrap();
-        let read = t.elapsed();
+        let ascii = bytes.is_ascii();
+        let ascii_time = t.elapsed();
+        let t = Instant::now();
+        let nul = bytes.contains(&0);
+        let nul_time = t.elapsed();
+        let t = Instant::now();
+        let text = std::str::from_utf8(&bytes).expect("utf8");
+        let utf8_time = t.elapsed();
+        let t = Instant::now();
+        let eol = textfile::detect_eol(text);
+        let eol_time = t.elapsed();
+        // The prototype's read: 4 MB chunks into one reused buffer.
+        let t = Instant::now();
+        let mut file = std::fs::File::open(&path).unwrap();
+        let mut buf = vec![0u8; 4 << 20];
+        loop {
+            if file.read(&mut buf).unwrap() == 0 {
+                break;
+            }
+        }
+        let stream_read = t.elapsed();
+        let t = Instant::now();
         let decoded = textfile::decode_owned(bytes, 1252);
-        let decode = t.elapsed();
-        let large = textfile::is_large(stat.size);
-        let doc = e.create_document(large);
-        e.show_document(doc);
-        e.set_eol_mode(decoded.eol);
-        e.fill(&decoded.text, large);
-        let total = t.elapsed();
+        let decode_time = t.elapsed();
         eprintln!(
-            "{} MB, large={large}: read {read:?}, + decode {decode:?}, total {total:?}; {} bytes in the document",
-            stat.size / (1024 * 1024),
-            e.text_len()
+            "{} MB: is_ascii {ascii_time:?} ({ascii}), NUL scan {nul_time:?} ({nul}), \
+             UTF-8 validate {utf8_time:?}, EOL scan {eol_time:?} ({eol}), \
+             stream read {stream_read:?}, decode_owned {decode_time:?} ({} {})",
+            decoded.text.len() / (1024 * 1024),
+            decoded.encoding,
+            decoded.eol
         );
     }
 }
