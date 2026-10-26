@@ -104,8 +104,9 @@ CapsLock & n::Run("<path>\scrivi.exe")
   `.ini` is to be confirmed in the v1 hand check. From research, types that hard-code Notepad (`.bat`,
   `.reg`) keep Notepad.
 - **Right-click > New > Text Document:** to be confirmed in the v1 hand check.
-- **Opening a 200 MB log takes about 1 s** on a busy machine (SCRIVI-18); the spec target is about 337 ms
-  (tracked in SCRIVI-30). Files over 50 MB open read-only, without undo, wrap or styling.
+- **Opening a 200 MB log takes about 0.35 s** in-process with a warm cache (SCRIVI-30), against the
+  spec's 337 ms target; most of what is left is Scintilla's own insert, and a busy machine adds to
+  both. Files over 50 MB open read-only, without undo, wrap or styling.
 - **The exe is 2.57 MB**, above the spec's 1–2 MB goal.
 - **A live log over 50 MB reloads after each change.** A Large file that something keeps appending to is
   reloaded after each debounced Disk change; accepted for v1.
