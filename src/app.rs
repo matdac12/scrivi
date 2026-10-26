@@ -22,7 +22,10 @@ use windows::Win32::Graphics::Gdi::{
 use windows::Win32::System::DataExchange::COPYDATASTRUCT;
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::HiDpi::{GetDpiForWindow, GetSystemMetricsForDpi};
-use windows::Win32::UI::Input::KeyboardAndMouse::{SetFocus, TrackMouseEvent, TME_LEAVE, TME_NONCLIENT, TRACKMOUSEEVENT};
+use windows::Win32::UI::Input::KeyboardAndMouse::{
+    GetCapture, ReleaseCapture, SetCapture, SetFocus, TrackMouseEvent, TME_LEAVE, TME_NONCLIENT, TRACKMOUSEEVENT,
+};
+use windows::Win32::UI::Shell::{SHAppBarMessage, ABE_BOTTOM, ABE_LEFT, ABE_RIGHT, ABE_TOP, ABM_GETAUTOHIDEBAREX, APPBARDATA};
 use windows::Win32::UI::WindowsAndMessaging::*;
 
 use crate::chrome::{Frame, Hit, Layout, Painter, Rect, Status, TabView, View};
@@ -38,6 +41,9 @@ const START_W: f32 = 1100.0;
 const START_H: f32 = 760.0;
 const MIN_W: f32 = 480.0;
 const MIN_H: f32 = 240.0;
+/// Repaints asked for after failed paints, before giving up until the next
+/// ordinary one.
+const PAINT_RETRIES: u32 = 3;
 
 /// What the chrome shows; borrowed only for short stretches that make no
 /// Win32 call which could send a message back (spec §13).
@@ -56,6 +62,8 @@ struct Ui {
     tracking: bool,
     tracking_nc: bool,
     active: bool,
+    /// Paints failed in a row, for `PAINT_RETRIES`.
+    paint_failures: u32,
 }
 
 struct App {
@@ -161,6 +169,7 @@ pub fn run(initial: Request) -> i32 {
             tracking: false,
             tracking_nc: false,
             active: true,
+            paint_failures: 0,
         };
         let a: &'static App = Box::leak(Box::new(App { hwnd, editor, painter: RefCell::new(painter), ui: RefCell::new(ui) }));
         APP.with(|c| {
@@ -323,6 +332,52 @@ fn relayout(a: &App) {
     invalidate(a, None);
 }
 
+/// The mouse went down on a button we draw: show it pressed and capture the
+/// mouse until it comes up.
+fn press(a: &App, hit: Hit) {
+    let title = {
+        let mut ui = a.ui.borrow_mut();
+        ui.pressed = Some(hit);
+        ui.hover = Some(hit);
+        ui.layout.title
+    };
+    invalidate(a, Some(title));
+    unsafe {
+        SetCapture(a.hwnd);
+    }
+}
+
+/// The mouse came up: end the press, and return what was pressed.
+fn release(a: &App) -> Option<Hit> {
+    let (pressed, title) = {
+        let mut ui = a.ui.borrow_mut();
+        (ui.pressed.take(), ui.layout.title)
+    };
+    invalidate(a, Some(title));
+    unsafe {
+        if GetCapture() == a.hwnd {
+            // Sends WM_CAPTURECHANGED: nothing may be borrowed here.
+            let _ = ReleaseCapture();
+        }
+    }
+    pressed
+}
+
+/// A press and release on the same button.
+fn click(a: &App, hit: Hit) {
+    let hwnd = a.hwnd;
+    let command = match hit {
+        Hit::Minimize => SC_MINIMIZE,
+        Hit::Maximize if unsafe { IsZoomed(hwnd) }.as_bool() => SC_RESTORE,
+        Hit::Maximize => SC_MAXIMIZE,
+        Hit::Close => SC_CLOSE,
+        _ => return,
+    };
+    unsafe {
+        let _ = PostMessageW(Some(hwnd), WM_SYSCOMMAND, WPARAM(command as usize), LPARAM(0));
+    }
+}
+
 fn set_hover(a: &App, hover: Option<Hit>) {
     let title = {
         let mut ui = a.ui.borrow_mut();
@@ -356,10 +411,10 @@ fn track_leave(a: &App, nonclient: bool) {
 }
 
 fn paint(a: &App) {
-    unsafe {
+    let painted = unsafe {
         let mut ps = PAINTSTRUCT::default();
         let hdc = BeginPaint(a.hwnd, &mut ps);
-        {
+        let painted = {
             let ui = a.ui.borrow();
             let status = status_of(&ui);
             let tabs = [TabView { name: &ui.tab_name, active: true, unsaved: false }];
@@ -368,12 +423,27 @@ fn paint(a: &App) {
                 tabs: &tabs,
                 status: &status,
                 hover: ui.hover,
-                pressed: ui.pressed,
+                // Dragged off its button, a press no longer shows.
+                pressed: ui.pressed.filter(|p| ui.hover == Some(*p)),
                 active: ui.active,
             };
-            let _ = a.painter.borrow_mut().paint(hdc, &ps.rcPaint, &view);
-        }
+            a.painter.borrow_mut().paint(hdc, &ps.rcPaint, &view)
+        };
         let _ = EndPaint(a.hwnd, &ps);
+        painted
+    };
+    // A lost target (D2DERR_RECREATE_TARGET, ...) is rebuilt by the next
+    // paint: ask for one, a few times at most.
+    let retry = {
+        let mut ui = a.ui.borrow_mut();
+        ui.paint_failures = if painted.is_ok() { 0 } else { ui.paint_failures + 1 };
+        (painted.is_err() && ui.paint_failures <= PAINT_RETRIES).then(|| {
+            let l = &ui.layout;
+            [Rect { bottom: l.editor.top, ..l.title }, l.status]
+        })
+    };
+    for band in retry.into_iter().flatten() {
+        invalidate(a, Some(band));
     }
 }
 
@@ -390,9 +460,38 @@ unsafe fn calc_size(hwnd: HWND, lp: LPARAM) -> LRESULT {
         r.bottom -= by;
         if IsZoomed(hwnd).as_bool() {
             r.top += by;
+            leave_room_for_autohide_bars(hwnd, r);
         }
     }
     LRESULT(0)
+}
+
+/// A maximised Window covering the whole monitor hides an auto-hide taskbar
+/// for good: leave it a 1 px strip on its edge, as Chromium does.
+unsafe fn leave_room_for_autohide_bars(hwnd: HWND, r: &mut RECT) {
+    unsafe {
+        let mut mi = MONITORINFO { cbSize: std::mem::size_of::<MONITORINFO>() as u32, ..Default::default() };
+        if !GetMonitorInfoW(MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST), &mut mi).as_bool() {
+            return;
+        }
+        for edge in [ABE_LEFT, ABE_TOP, ABE_RIGHT, ABE_BOTTOM] {
+            let mut abd = APPBARDATA {
+                cbSize: std::mem::size_of::<APPBARDATA>() as u32,
+                uEdge: edge,
+                rc: mi.rcMonitor,
+                ..Default::default()
+            };
+            if SHAppBarMessage(ABM_GETAUTOHIDEBAREX, &mut abd) == 0 {
+                continue;
+            }
+            match edge {
+                ABE_LEFT => r.left += 1,
+                ABE_TOP => r.top += 1,
+                ABE_RIGHT => r.right -= 1,
+                _ => r.bottom -= 1,
+            }
+        }
+    }
 }
 
 unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
@@ -421,8 +520,10 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                 let title = {
                     let mut ui = a.ui.borrow_mut();
                     ui.tracking_nc = false;
-                    ui.pressed = None;
-                    ui.hover = ui.hover.filter(|h| Hit::caption_button(h.nc_code()).is_none());
+                    // A press holds the capture: it keeps its hover until released.
+                    if ui.pressed.is_none() {
+                        ui.hover = ui.hover.filter(|h| Hit::caption_button(h.nc_code()).is_none());
+                    }
                     ui.layout.title
                 };
                 invalidate(a, Some(title));
@@ -430,36 +531,48 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             }
             WM_NCLBUTTONDOWN | WM_NCLBUTTONDBLCLK => match Hit::caption_button(wp.0 as u32) {
                 Some(button) => {
-                    let title = {
-                        let mut ui = a.ui.borrow_mut();
-                        ui.pressed = Some(button);
-                        ui.layout.title
-                    };
-                    invalidate(a, Some(title));
+                    press(a, button);
                     LRESULT(0)
                 }
                 None => DefWindowProcW(hwnd, msg, wp, lp),
             },
-            WM_NCLBUTTONUP => match Hit::caption_button(wp.0 as u32) {
-                Some(button) => {
-                    let (pressed, title) = {
-                        let mut ui = a.ui.borrow_mut();
-                        (ui.pressed.take(), ui.layout.title)
-                    };
-                    invalidate(a, Some(title));
-                    if pressed == Some(button) {
-                        let command = match button {
-                            Hit::Minimize => SC_MINIMIZE,
-                            Hit::Maximize if IsZoomed(hwnd).as_bool() => SC_RESTORE,
-                            Hit::Maximize => SC_MAXIMIZE,
-                            _ => SC_CLOSE,
-                        };
-                        let _ = PostMessageW(Some(hwnd), WM_SYSCOMMAND, WPARAM(command as usize), LPARAM(0));
+            // The press captured the mouse, so its release normally arrives as
+            // WM_LBUTTONUP; this covers a capture lost on the way.
+            WM_NCLBUTTONUP => {
+                let pressed = release(a);
+                match Hit::caption_button(wp.0 as u32) {
+                    Some(button) => {
+                        if pressed == Some(button) {
+                            click(a, button);
+                        }
+                        LRESULT(0)
                     }
-                    LRESULT(0)
+                    None => DefWindowProcW(hwnd, msg, wp, lp),
                 }
-                None => DefWindowProcW(hwnd, msg, wp, lp),
-            },
+            }
+            WM_LBUTTONUP => {
+                let (x, y) = xy(lp);
+                let hit = a.ui.borrow().layout.hit_test(x, y);
+                if release(a) == Some(hit) {
+                    click(a, hit);
+                }
+                LRESULT(0)
+            }
+            WM_CAPTURECHANGED => {
+                let title = {
+                    let mut ui = a.ui.borrow_mut();
+                    ui.pressed = None;
+                    ui.layout.title
+                };
+                invalidate(a, Some(title));
+                LRESULT(0)
+            }
+            WM_CANCELMODE => {
+                if GetCapture() == hwnd {
+                    let _ = ReleaseCapture();
+                }
+                DefWindowProcW(hwnd, msg, wp, lp)
+            }
             WM_MOUSEMOVE => {
                 track_leave(a, false);
                 let (x, y) = xy(lp);
@@ -473,7 +586,11 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                 LRESULT(0)
             }
             WM_SIZE => {
-                relayout(a);
+                // Minimised, the client is 0 x 0: resizing Scintilla to it
+                // would rewrap the text and lose the scroll position.
+                if wp.0 as u32 != SIZE_MINIMIZED {
+                    relayout(a);
+                }
                 LRESULT(0)
             }
             WM_GETMINMAXINFO => {
