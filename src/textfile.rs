@@ -10,13 +10,10 @@
 
 use std::fmt;
 
-use encoding_rs::{EncoderResult, UTF_16BE, UTF_16LE, WINDOWS_1252};
+use encoding_rs::{EncoderResult, UTF_16BE, UTF_16LE, UTF_8, WINDOWS_1252};
 
 /// A file over this many bytes is a Large file: read-only, no styling.
 pub const LARGE_FILE_BYTES: u64 = 50 * 1024 * 1024;
-
-/// Code page used when the caller has no system ANSI code page to offer.
-pub const DEFAULT_ANSI_CODE_PAGE: u16 = 1252;
 
 /// True when a file of `len` bytes opens as a Large file.
 pub fn is_large(len: u64) -> bool {
@@ -70,7 +67,7 @@ impl Encoding {
 }
 
 impl Default for Encoding {
-    /// New files are UTF-8 without BOM.
+    /// An Untitled tab starts as UTF-8 without BOM.
     fn default() -> Self {
         Encoding::Utf8
     }
@@ -113,7 +110,7 @@ impl Eol {
 }
 
 impl Default for Eol {
-    /// New files use LF.
+    /// An Untitled tab starts with LF.
     fn default() -> Self {
         Eol::Lf
     }
@@ -125,7 +122,7 @@ impl fmt::Display for Eol {
     }
 }
 
-/// What a new, empty tab starts with.
+/// What an Untitled tab starts with.
 pub const NEW_FILE: (Encoding, Eol) = (Encoding::Utf8, Eol::Lf);
 
 /// The result of [`decode`]. `text` has no BOM and keeps its original line
@@ -236,7 +233,10 @@ fn decode_text(bytes: &[u8], ansi_code_page: u16) -> (String, Encoding) {
     let guess = detector.guess(None, chardetng::Utf8Detection::Deny);
     let legacy = if guess == WINDOWS_1252 {
         // chardetng's "no idea, Western" answer: trust the user's code page.
-        codepage::to_encoding(ansi_code_page).unwrap_or(WINDOWS_1252)
+        codepage::to_encoding(ansi_code_page)
+            // A UTF-8 or UTF-16 "ANSI" page (65001, 1200, 1201) is no legacy page.
+            .filter(|e| ![UTF_8, UTF_16LE, UTF_16BE].contains(e))
+            .unwrap_or(WINDOWS_1252)
     } else {
         guess
     };
@@ -477,6 +477,14 @@ mod tests {
         assert_eq!(d.encoding, Encoding::Other(encoding_rs::WINDOWS_1251));
         let d = decode(&[b'a', 0xE0, b' ', 0xE8, b' ', 0xEC], 1252);
         assert_eq!(d.encoding, Encoding::Windows1252);
+    }
+
+    #[test]
+    fn utf8_or_utf16_ansi_code_page_falls_back_to_1252() {
+        for cp in [65001, 1200, 1201] {
+            let d = decode(&[b'a', 0xE0, b' ', 0xE8, b' ', 0xEC], cp);
+            assert_eq!(d.encoding, Encoding::Windows1252);
+        }
     }
 
     #[test]
