@@ -2,9 +2,11 @@
 
 Rules for anyone (human or agent) changing this repo.
 
-- **The spec is the source.** Traccia project SCRIVI. The planning map is the
-  `wayfinder:map` issue there; its closed tickets hold the decisions. Don't
-  re-decide what they settle.
+- **The spec is the source.** Traccia project SCRIVI, document
+  `scrivi-v1-spec.md`. The build is milestone **v1** (issues numbered 01–18,
+  blocking set; its description holds the working rules). Decisions live in the
+  closed SCRIVI-2..7 tickets of the planning map SCRIVI-1. Don't re-decide what
+  they settle.
 - **Words:** use the terms in `GLOSSARY.md` (Tab, Source view, Rendered view,
   Disk change, ...), in code and in prose.
 - **Decisions that are hard to reverse** get an ADR in `docs/adr/`.
@@ -13,3 +15,6 @@ Rules for anyone (human or agent) changing this repo.
 - **Borrowed code** must be MIT, Apache-2.0, BSD, zlib, ISC or similarly
   permissive, and gets an entry in `THIRD_PARTY_NOTICES.md`. GPL/LGPL/MPL code
   (Notepad++, uchardet, ...) may be read for ideas, never copied.
+- **Reference branches** (never merged): `research/borrowable-code`,
+  `research/webview2-on-demand`, `prototype/scintilla-source-view`,
+  `prototype/window-look`.
