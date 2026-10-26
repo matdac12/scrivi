@@ -75,6 +75,20 @@ fn lines(log: &Path) -> Vec<String> {
     std::fs::read_to_string(log).unwrap_or_default().lines().map(String::from).collect()
 }
 
+/// A handing-off process exits once the resident has *posted* the request, so the log line
+/// lands a moment later: poll until the log holds at least `n` lines (5 s), then return them.
+fn wait_lines(log: &Path, n: usize) -> Vec<String> {
+    let t = Instant::now();
+    loop {
+        let l = lines(log);
+        if l.len() >= n {
+            return l;
+        }
+        assert!(t.elapsed() < Duration::from_secs(5), "timed out waiting for {n} request lines, have {l:?}");
+        std::thread::sleep(Duration::from_millis(25));
+    }
+}
+
 /// Kills the resident (by PID) if the test fails half-way, so none is left behind.
 struct Resident(Child);
 impl Drop for Resident {
@@ -151,31 +165,30 @@ fn launch_lifecycle() {
     let mut resident = Resident(scrivi(&log, &[first.to_str().unwrap()]).spawn().unwrap());
     wait_until("the Scrivi.Window window", || find().is_some());
     let hwnd = find().unwrap();
-    wait_until("the initial request", || lines(&log).len() == 1);
-    assert_eq!(lines(&log)[0], format!("Open\t{}", first.display()));
+    assert_eq!(wait_lines(&log, 1)[0], format!("Open\t{}", first.display()));
 
     // A second launch with a path hands over and exits 0; no second window.
     let notes = dir.join("notes.md");
     let status = scrivi(&log, &[notes.to_str().unwrap()]).status().unwrap();
     assert!(status.success());
-    assert_eq!(lines(&log)[1], format!("Open\t{}", notes.display()));
+    assert_eq!(wait_lines(&log, 2)[1], format!("Open\t{}", notes.display()));
     assert_eq!(find(), Some(hwnd));
     assert!(!me.another(hwnd));
     assert!(resident.0.try_wait().unwrap().is_none(), "resident died");
 
     // No arguments: a new tab. Several paths: all of them, in order.
     assert!(scrivi(&log, &[]).status().unwrap().success());
-    assert_eq!(lines(&log)[2], "NewTab");
+    assert_eq!(wait_lines(&log, 3)[2], "NewTab");
     let (a, b) = (dir.join("a.txt"), dir.join("b with space.md"));
     assert!(scrivi(&log, &[a.to_str().unwrap(), b.to_str().unwrap()]).status().unwrap().success());
-    assert_eq!(lines(&log)[3], format!("Open\t{}\t{}", a.display(), b.display()));
+    assert_eq!(wait_lines(&log, 4)[3], format!("Open\t{}\t{}", a.display(), b.display()));
 
     // A relative path arrives absolute.
     let mut rel = scrivi(&log, &["rel.md"]);
     rel.current_dir(&dir);
     assert!(rel.status().unwrap().success());
-    assert_eq!(lines(&log)[4], format!("Open\t{}", dir.join("rel.md").display()));
-    let before = lines(&log).len();
+    assert_eq!(wait_lines(&log, 5)[4], format!("Open\t{}", dir.join("rel.md").display()));
+    let before = wait_lines(&log, 5).len();
 
     // Explorer opening 10 files at once leaves one process: ten concurrent
     // launches all hand over and exit 0, and the one resident saw all ten.
@@ -185,7 +198,7 @@ fn launch_lifecycle() {
     for c in &mut children {
         assert!(wait_exit(c, "a concurrent launch").success());
     }
-    let mut got: Vec<String> = lines(&log)[before..].to_vec();
+    let mut got: Vec<String> = wait_lines(&log, before + files.len())[before..].to_vec();
     got.sort();
     let mut want: Vec<String> = files.iter().map(|f| format!("Open\t{f}")).collect();
     want.sort();
@@ -214,7 +227,7 @@ fn cold_race_leaves_one_resident() {
     let mut children: Vec<Child> =
         files.iter().map(|f| scrivi(&log, &[f.as_str()]).spawn().unwrap()).collect();
     wait_until("the resident window", || find().is_some());
-    wait_until("all requests", || lines(&log).len() == files.len());
+    wait_lines(&log, files.len());
     // Exactly one of the four is still running: the resident.
     let mut resident = None;
     let t = Instant::now();
