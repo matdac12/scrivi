@@ -84,6 +84,12 @@ pub const WM_RENDERED_LINK: u32 = WM_APP + 0x131;
 /// `rendered::webview::FAILED_TO_START` or `FAILED_TOO_LARGE`.
 pub const WM_RENDERED_FAILED: u32 = WM_APP + 0x132;
 
+// 11, Disk changes, posts from the watcher's thread: numbers from 0x190.
+
+/// Watched files may have changed: `app::disk` holds them in a queue (no
+/// pointer travels). The UI thread stats each file again before acting.
+pub const WM_DISK_EVENT: u32 = WM_APP + 0x190;
+
 #[cfg(test)]
 mod tests {
     use super::name;
@@ -104,6 +110,7 @@ mod tests {
             super::WM_RENDERED_SHOWN,
             super::WM_RENDERED_LINK,
             super::WM_RENDERED_FAILED,
+            super::WM_DISK_EVENT,
         ];
         for (i, a) in all.iter().enumerate() {
             assert!(all[i + 1..].iter().all(|b| a != b), "{a:#x} used twice");

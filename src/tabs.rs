@@ -956,6 +956,8 @@ impl Tabs {
             return Vec::new();
         }
         let Some(stat) = on_disk else {
+            // NTFS may give the file's index to another file now.
+            tab.file_id = None;
             return tab.file_missing(now);
         };
         tab.missing_since = None;

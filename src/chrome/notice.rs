@@ -52,6 +52,42 @@ pub struct Spec {
     pub buttons: Vec<Button>,
     /// Shows the ×, which sends [`NoticeAction::Dismiss`].
     pub closable: bool,
+    /// Where the mouse is: set by `app`, not part of what the Notice says.
+    pub mouse: Mouse,
+}
+
+/// How lit a button or the × is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Lit {
+    Off,
+    Hover,
+    Pressed,
+}
+
+/// The mouse over the Notice: what it is over, and what it went down on.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Mouse {
+    pub over: Option<Hit>,
+    pub down: Option<Hit>,
+}
+
+impl Mouse {
+    /// A pressed button shows pressed only while the mouse is still on it;
+    /// while one is held down no other lights up.
+    pub fn lit(&self, hit: Hit) -> Lit {
+        match (self.over == Some(hit), self.down) {
+            (false, _) => Lit::Off,
+            (true, None) => Lit::Hover,
+            (true, Some(down)) if down == hit => Lit::Pressed,
+            (true, Some(_)) => Lit::Off,
+        }
+    }
+
+    /// The mouse came up on `at`: the click, if that is the button it went
+    /// down on.
+    pub fn released_on(down: Option<Hit>, at: Option<Hit>) -> Option<Hit> {
+        down.filter(|d| Some(*d) == at)
+    }
 }
 
 /// What a click landed on.
@@ -149,6 +185,7 @@ pub fn for_tab(notice: tabs::Notice, name: &str, size: Option<u64>) -> Spec {
                 button("Reload", true, NoticeAction::Reload),
             ],
             closable: false,
+            mouse: Mouse::default(),
         },
         tabs::Notice::DeletedOnDisk => Spec {
             kind: Kind::Rose,
@@ -158,6 +195,7 @@ pub fn for_tab(notice: tabs::Notice, name: &str, size: Option<u64>) -> Spec {
             ],
             buttons: vec![button("Save", true, NoticeAction::Save)],
             closable: false,
+            mouse: Mouse::default(),
         },
         tabs::Notice::LargeFile => {
             let size = size.map_or(String::new(), |s| format!(" ({})", megabytes(s)));
@@ -166,6 +204,7 @@ pub fn for_tab(notice: tabs::Notice, name: &str, size: Option<u64>) -> Spec {
                 message: vec![plain(&format!("Large file{size}: read-only, without wrap or styling."))],
                 buttons: Vec::new(),
                 closable: true,
+                mouse: Mouse::default(),
             }
         }
     }
@@ -194,11 +233,22 @@ pub(super) fn draw(p: &Pass, v: &View, spec: &Spec, parts: &Parts, measure: &dyn
         x += width;
     }
 
-    for (r, b) in parts.buttons.iter().zip(&spec.buttons) {
+    for (i, (r, b)) in parts.buttons.iter().zip(&spec.buttons).enumerate() {
+        let lit = spec.mouse.lit(Hit::Button(i));
         if b.primary {
-            p.fill_rounded(*r, SMALL_RADIUS, colour::INK, 1.0)?;
+            let alpha = match lit {
+                Lit::Off => 1.0,
+                Lit::Hover => 0.85,
+                Lit::Pressed => 0.7,
+            };
+            p.fill_rounded(*r, SMALL_RADIUS, colour::INK, alpha)?;
             p.text(&b.label, &p.fonts.notice_button, *r, 0xFFFFFF)?;
         } else {
+            match lit {
+                Lit::Off => {}
+                Lit::Hover => p.fill_rounded(*r, SMALL_RADIUS, ink, 0.1)?,
+                Lit::Pressed => p.fill_rounded(*r, SMALL_RADIUS, ink, 0.2)?,
+            }
             let edge = D2D_RECT_F {
                 left: r.left as f32 + 0.5,
                 top: (r.top - p.oy) as f32 + 0.5,
@@ -217,6 +267,11 @@ pub(super) fn draw(p: &Pass, v: &View, spec: &Spec, parts: &Parts, measure: &dyn
         }
     }
     if let Some(close) = parts.close {
+        match spec.mouse.lit(Hit::Close) {
+            Lit::Off => {}
+            Lit::Hover => p.fill_rounded(close, SMALL_RADIUS, ink, 0.12)?,
+            Lit::Pressed => p.fill_rounded(close, SMALL_RADIUS, ink, 0.22)?,
+        }
         p.text(GLYPH_CLOSE, &p.fonts.tab_glyph, close, ink)?;
     }
     Ok(())
@@ -294,6 +349,29 @@ mod tests {
             assert_eq!(parts.hit(x, y), Some(Hit::Button(i)));
         }
         assert_eq!(parts.hit(parts.message.left + 1, 60), None);
+    }
+
+    #[test]
+    fn a_button_is_lit_by_the_mouse_over_it_and_pressed_only_where_it_went_down() {
+        let (save, other) = (Hit::Button(0), Hit::Button(1));
+        let mouse = |over, down| Mouse { over, down };
+        assert_eq!(mouse(None, None).lit(save), Lit::Off);
+        assert_eq!(mouse(Some(save), None).lit(save), Lit::Hover);
+        assert_eq!(mouse(Some(save), Some(save)).lit(save), Lit::Pressed);
+        // Dragged off the pressed button: it no longer shows pressed.
+        assert_eq!(mouse(Some(other), Some(save)).lit(save), Lit::Off);
+        // ... and the one under the mouse does not light up for a press elsewhere.
+        assert_eq!(mouse(Some(other), Some(save)).lit(other), Lit::Off);
+        assert_eq!(mouse(Some(Hit::Close), None).lit(Hit::Close), Lit::Hover);
+    }
+
+    #[test]
+    fn a_click_fires_only_when_the_mouse_comes_up_on_the_button_it_went_down_on() {
+        let (a, b) = (Hit::Button(0), Hit::Button(1));
+        assert_eq!(Mouse::released_on(Some(a), Some(a)), Some(a));
+        assert_eq!(Mouse::released_on(Some(a), Some(b)), None);
+        assert_eq!(Mouse::released_on(Some(a), None), None);
+        assert_eq!(Mouse::released_on(None, Some(a)), None);
     }
 
     #[test]
