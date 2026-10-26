@@ -51,6 +51,11 @@ fn name(base: &str, instance: Option<&str>) -> String {
 /// `COPYDATASTRUCT::dwData` of a launch request ("SCR1"). Anything else is ignored.
 pub const COPYDATA_REQUEST: usize = 0x5343_5231;
 
+/// Timer ids on the Window. Flash is 1; Recheck timers count up from 0x100.
+pub const TIMER_RESTYLE: usize = 2;
+/// Quiet time after an edit before markdown styling is redone.
+pub const RESTYLE_MS: u32 = 150;
+
 // Internal resident messages: every WM_APP + n goes here.
 
 /// Posted from `WM_DPICHANGED`: Scintilla has seen the new DPI by the time it

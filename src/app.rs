@@ -47,7 +47,8 @@ use windows::Win32::UI::WindowsAndMessaging::*;
 use crate::chrome::{Frame, Hit, Layout, Painter, Rect, Status, TabView, View};
 use crate::editor::{sci, Caret, Editor, NotifyHeader, ViewState};
 use crate::launch::{self, Request};
-use crate::proto::{self, COPYDATA_REQUEST, ICON, WM_EDITOR_DPI, WM_HANDOFF};
+use crate::mdview::{self, Applied};
+use crate::proto::{self, COPYDATA_REQUEST, ICON, RESTYLE_MS, TIMER_RESTYLE, WM_EDITOR_DPI, WM_HANDOFF};
 use crate::tabs::{Action, CloseReply, EditorDoc, FileStat, LoadedFile, StatusNote, Tab, TabId, Tabs};
 use crate::textfile::{self, Encoding, Eol};
 
@@ -149,6 +150,8 @@ struct App {
     quiet: Cell<bool>,
     /// The line ending, read-only state and wrap last sent for the shown Tab.
     applied: Cell<Option<(Eol, bool, bool)>>,
+    /// The Tabs whose documents hold markdown styles.
+    styled: RefCell<Applied<TabId>>,
     /// Pending `Action::Recheck`s: timer id and path.
     rechecks: RefCell<Vec<(usize, PathBuf)>>,
     next_timer: Cell<usize>,
@@ -280,6 +283,7 @@ pub fn run(initial: Request) -> i32 {
             applied: Cell::new(None),
             rechecks: RefCell::new(Vec::new()),
             next_timer: Cell::new(FIRST_RECHECK_TIMER),
+            styled: RefCell::default(),
             closing: Cell::new(false),
         }));
         APP.with(|c| {
@@ -467,11 +471,14 @@ fn perform(a: &App, action: Action) {
             // 13: show or hide the Rendered view as the Tab's view says.
             if a.shown.get() == Some(id) {
                 apply_settings(a, id);
+                // The Tab may have started or stopped being styled (Save As, 1 MB).
+                arm_restyle(a);
             }
             invalidate(a, None);
         }
         Action::Closed { id, document } => {
             a.views.borrow_mut().remove(&id);
+            a.styled.borrow_mut().forget(id);
             if a.shown.get() == Some(id) {
                 a.shown.set(None);
             }
@@ -529,6 +536,7 @@ fn perform(a: &App, action: Action) {
 
 /// Give `doc` to Tab `id`, and release whatever it replaces.
 fn adopt(a: &App, id: TabId, doc: isize) {
+    a.styled.borrow_mut().forget(id);
     let old = a.tabs.borrow_mut().set_document(id, EditorDoc(doc));
     if let Some(EditorDoc(old)) = old {
         a.editor.release_document(old);
@@ -554,7 +562,23 @@ fn show(a: &App, id: TabId) {
     apply_settings(a, id);
     let view = a.views.borrow().get(&id).copied().unwrap_or_default();
     a.editor.restore_view(&view);
+    restyle(a);
     refresh_status(a);
+}
+
+/// Style (or unstyle) the shown Tab to match `Tab::styled`, if it isn't already.
+fn restyle(a: &App) {
+    let Some(id) = a.shown.get() else { return };
+    let wanted = a.tabs.borrow().get(id).is_some_and(Tab::styled);
+    let plan = a.styled.borrow_mut().plan(id, wanted);
+    mdview::run(&a.editor, plan);
+}
+
+/// Restyle once typing pauses; each edit restarts the wait.
+fn arm_restyle(a: &App) {
+    unsafe {
+        SetTimer(Some(a.hwnd), TIMER_RESTYLE, RESTYLE_MS, None);
+    }
 }
 
 /// The shown Tab's line ending, read-only state and wrap. Only a change is
@@ -648,6 +672,8 @@ fn load(a: &App, id: TabId, path: &Path, encoding: Option<Encoding>, keep_caret_
     let (encoding, eol, lossy) = (decoded.encoding, decoded.eol, decoded.lossy);
     let file = LoadedFile { encoding, eol, stat, text_len: decoded.text.len(), lossy };
     command(a, |t| t.loaded(id, file));
+    // The Tab now knows its size: style it, or leave it plain over 1 MB.
+    restyle(a);
 }
 
 fn read_file(path: &Path) -> std::io::Result<(Vec<u8>, FileStat)> {
@@ -1207,7 +1233,9 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             WM_TIMER => {
                 let timer = wp.0;
                 let _ = KillTimer(Some(hwnd), timer);
-                if timer == FLASH_TIMER {
+                if timer == TIMER_RESTYLE {
+                    restyle(a);
+                } else if timer == FLASH_TIMER {
                     let status = {
                         let mut ui = a.ui.borrow_mut();
                         ui.flash = None;
@@ -1298,6 +1326,8 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                             if let Some(id) = a.shown.get() {
                                 let len = a.editor.text_len();
                                 command(a, |t| t.edited(id, len));
+                                a.styled.borrow_mut().touch(id);
+                                arm_restyle(a);
                             }
                         }
                         _ => {}
