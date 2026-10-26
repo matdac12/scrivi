@@ -52,13 +52,14 @@ impl Checkers {
         self.list.is_empty()
     }
 
-    fn reject_uncached(checker: &ISpellChecker, word: &str) -> bool {
+    /// `None` if the checker failed to answer.
+    fn reject_uncached(checker: &ISpellChecker, word: &str) -> Option<bool> {
         let wide = to_wide(word);
         unsafe {
-            let Ok(errors) = checker.Check(PCWSTR(wide.as_ptr())) else { return false };
+            let errors = checker.Check(PCWSTR(wide.as_ptr())).ok()?;
             let mut error = None;
             // S_OK: an error was returned; S_FALSE: the text is clean.
-            errors.Next(&mut error).0 == 0 && error.is_some()
+            Some(errors.Next(&mut error).0 == 0 && error.is_some())
         }
     }
 
@@ -67,7 +68,8 @@ impl Checkers {
         if let Some(known) = self.cache.borrow()[index].get(word) {
             return *known;
         }
-        let rejected = Self::reject_uncached(&self.list[index].1, word);
+        // A failed check says nothing: don't remember it.
+        let Some(rejected) = Self::reject_uncached(&self.list[index].1, word) else { return false };
         self.cache.borrow_mut()[index].insert(word.to_string(), rejected);
         rejected
     }
@@ -75,10 +77,10 @@ impl Checkers {
     /// Whether every checker rejects `word` or its elided tail (the combine rule).
     pub fn is_misspelled(&self, word: &str) -> bool {
         let normal = word.replace('\u{2019}', "'");
-        if self.added.borrow().contains(&normal.to_lowercase()) {
-            return false;
-        }
-        let all_reject = |w: &str| super::combine((0..self.list.len()).map(|i| self.rejects(i, w)));
+        let all_reject = |w: &str| {
+            !self.added.borrow().contains(&w.to_lowercase())
+                && super::combine((0..self.list.len()).map(|i| self.rejects(i, w)))
+        };
         super::is_misspelled(&normal, &[&all_reject])
     }
 
@@ -213,19 +215,25 @@ mod tests {
         use windows::Win32::Globalization::ISpellChecker2;
         let Some(c) = both() else { return };
         let word = "zqxvwkpl";
-        assert!(c.is_misspelled(word));
-        c.add(word);
-        let flagged_after = c.is_misspelled(word);
-        // Leave the user's dictionaries as they were.
-        let wide = to_wide(word);
-        for (_, checker) in &c.list {
-            if let Ok(two) = checker.cast::<ISpellChecker2>() {
-                unsafe {
-                    let _ = two.Remove(PCWSTR(wide.as_ptr()));
+        // Leaves the user's dictionaries as they were, even if an assert fails.
+        struct Cleanup<'a>(&'a Checkers, &'static str);
+        impl Drop for Cleanup<'_> {
+            fn drop(&mut self) {
+                let wide = to_wide(self.1);
+                for (_, checker) in &self.0.list {
+                    if let Ok(two) = checker.cast::<ISpellChecker2>() {
+                        unsafe {
+                            let _ = two.Remove(PCWSTR(wide.as_ptr()));
+                        }
+                    }
                 }
             }
         }
-        assert!(!flagged_after);
+        let _cleanup = Cleanup(&c, word);
+        assert!(c.is_misspelled(word));
+        c.add(word);
+        assert!(!c.is_misspelled(word));
+        assert!(!c.is_misspelled("dell'zqxvwkpl"));
     }
 
     #[test]

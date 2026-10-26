@@ -76,9 +76,14 @@ fn worth_checking(token: &str) -> bool {
     !letters[1..].iter().zip(&letters).any(|(c, prev)| c.is_uppercase() && prev.is_lowercase())
 }
 
-/// Whether the chunk of text between two spaces is an address or a path.
+/// Whether the chunk of text between two spaces is an email address, a URL or
+/// a path (and not prose like "and/or").
 fn is_address(chunk: &str) -> bool {
-    chunk.contains(['@', '/', '\\'])
+    chunk.contains('@')
+        || chunk.contains("//")
+        || chunk.contains(":\\")
+        || chunk.contains(":/")
+        || chunk.starts_with(['/', '\\', '~'])
 }
 
 /// The words of `text` to check inside `window`: byte ranges of tokens that
@@ -103,7 +108,7 @@ pub fn words(text: &str, runs: &[(Range<usize>, Style)], window: Range<usize>) -
             // The chunk around the token, within this stretch of prose.
             let lo = text[start..from].rfind(char::is_whitespace).map_or(start, |i| start + i);
             let hi = text[to..end].find(char::is_whitespace).map_or(end, |i| to + i);
-            if is_address(&text[lo..hi]) {
+            if is_address(text[lo..hi].trim_start()) {
                 return;
             }
             if worth_checking(token) {
@@ -216,6 +221,8 @@ mod tests {
     #[test]
     fn email_and_path_pieces_are_skipped() {
         assert_eq!(found("mail foo@barr.example or C:\\tmpp\\filee ok"), ["mail", "or", "ok"]);
+        assert_eq!(found("see /usr/locall/bin and ~/dokuments ok"), ["see", "and", "ok"]);
+        assert_eq!(found("clientee/fornitore"), ["clientee", "fornitore"]);
     }
 
     #[test]

@@ -43,6 +43,7 @@ const SCI_POINTYFROMPOSITION: u32 = 2165;
 const SCI_CHARPOSITIONFROMPOINTCLOSE: u32 = 2562;
 const SCI_LINESONSCREEN: u32 = 2370;
 const SCI_USEPOPUP: u32 = 2371;
+const SCI_TEXTHEIGHT: u32 = 2279;
 const SCI_INDICATORVALUEAT: u32 = 2507;
 const SCI_INDICATORSTART: u32 = 2508;
 const SCI_INDICATOREND: u32 = 2509;
@@ -95,13 +96,14 @@ impl SpellView {
         }
         let len = e.text_len();
         let ptr = e.call(SCI_GETCHARACTERPOINTER, 0, 0) as *const u8;
-        if ptr.is_null() {
-            return;
-        }
         // SAFETY: Scintilla's contiguous text, `len` bytes, valid until the next
         // edit; nothing below changes the text.
-        let bytes = unsafe { std::slice::from_raw_parts(ptr, len) };
-        let Ok(text) = std::str::from_utf8(bytes) else { return };
+        let text = if ptr.is_null() { None } else { std::str::from_utf8(unsafe { std::slice::from_raw_parts(ptr, len) }).ok() };
+        let Some(text) = text else {
+            self.checked.set(None);
+            e.call(SCI_INDICATORCLEARRANGE, 0, len as isize);
+            return;
+        };
         let (first, last) = visible_lines(e);
         let from = (first - MARGIN_LINES).max(0);
         let to = (last + MARGIN_LINES).min(e.call(SCI_GETLINECOUNT, 0, 0) - 1);
@@ -185,8 +187,9 @@ impl SpellView {
 
         match choice {
             ID_ADD => {
-                if let Some((_, _, word)) = &flagged {
+                if let Some((start, end, word)) = &flagged {
                     self.checkers().add(word);
+                    let _ = (start, end);
                     self.run(e, true);
                 }
             }
@@ -207,9 +210,12 @@ impl SpellView {
             }
             n if n >= ID_SUGGESTION => {
                 // The edit marks the Tab unsaved and re-checks after the pause.
-                if let (Some((start, end, _)), Some(s)) = (&flagged, suggestions.get(n - ID_SUGGESTION)) {
-                    e.call(SCI_SETTARGETRANGE, *start, *end as isize);
-                    e.call(SCI_REPLACETARGET, s.len(), s.as_ptr() as isize);
+                // The menu pumps messages: only replace if the word is still there.
+                if let (Some((start, end, word)), Some(s)) = (&flagged, suggestions.get(n - ID_SUGGESTION)) {
+                    if self.flagged_word_at(e, *start as isize).is_some_and(|(s2, e2, w2)| (s2, e2) == (*start, *end) && w2 == *word) {
+                        e.call(SCI_SETTARGETRANGE, *start, *end as isize);
+                        e.call(SCI_REPLACETARGET, s.len(), s.as_ptr() as isize);
+                    }
                 }
             }
             _ => {}
@@ -239,7 +245,7 @@ fn visible_lines(e: &Editor) -> (isize, isize) {
     let top = e.call(SCI_GETFIRSTVISIBLELINE, 0, 0);
     let on_screen = e.call(SCI_LINESONSCREEN, 0, 0);
     let first = e.call(SCI_DOCLINEFROMVISIBLE, top as usize, 0);
-    let last = e.call(SCI_DOCLINEFROMVISIBLE, (top + on_screen) as usize, 0);
+    let last = e.call(SCI_DOCLINEFROMVISIBLE, (top + on_screen) as usize, 0).min(e.call(SCI_GETLINECOUNT, 0, 0) - 1);
     (first, last)
 }
 
@@ -252,7 +258,7 @@ fn locate(e: &Editor, lp: LPARAM) -> (POINT, isize) {
         let caret = e.call(SCI_GETCURRENTPOS, 0, 0);
         let mut pt = POINT {
             x: e.call(SCI_POINTXFROMPOSITION, 0, caret) as i32,
-            y: e.call(SCI_POINTYFROMPOSITION, 0, caret) as i32 + 16,
+            y: e.call(SCI_POINTYFROMPOSITION, 0, caret) as i32 + e.call(SCI_TEXTHEIGHT, 0, 0) as i32,
         };
         unsafe {
             let _ = ClientToScreen(e.hwnd(), &mut pt);
