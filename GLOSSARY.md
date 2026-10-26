@@ -32,6 +32,10 @@ _Avoid_: editor mode, edit view
 A read-only view of a markdown file as formatted output, toggled from the source view.
 _Avoid_: preview, reading mode
 
+**Large file**:
+A text file over 50 MB, which opens read-only without wrap or styling.
+_Avoid_: huge file, big file
+
 **Disk change**:
 The file on disk changing under an open window, typically because an agent edited it.
 _Avoid_: external edit, conflict
