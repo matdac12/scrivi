@@ -1,4 +1,5 @@
 //! scrivi: a minimal text editor for Windows that replaces Notepad.
+#![cfg_attr(not(test), windows_subsystem = "windows")]
 
 mod app;
 mod chrome;
