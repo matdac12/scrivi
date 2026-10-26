@@ -38,6 +38,8 @@ pub struct State {
     pub can_paste: bool,
     /// A Markdown file or Untitled tab: Ctrl+E applies (13).
     pub markdown: bool,
+    /// The Rendered view shows: there is no text to search or jump in (12).
+    pub rendered: bool,
     /// View › Word wrap: on, and whether the Tab allows it (a Large file doesn't).
     pub wrap: bool,
     pub wrap_allowed: bool,
@@ -61,6 +63,11 @@ pub enum Entry {
 
 fn always(_: &State) -> bool {
     true
+}
+
+/// The Source view shows.
+fn source(s: &State) -> bool {
+    !s.rendered
 }
 
 fn writable(s: &State) -> bool {
@@ -91,9 +98,9 @@ pub const EDIT: &[Entry] = &[
     Entry::Command { label: "&Paste", keys: "Ctrl+V", id: cmd::PASTE, enabled: |s| s.can_paste && !s.read_only },
     Entry::Command { label: "Select &all", keys: "Ctrl+A", id: cmd::SELECT_ALL, enabled: always },
     Entry::Separator,
-    Entry::Command { label: "&Find\u{2026}", keys: "Ctrl+F", id: cmd::FIND, enabled: always },
-    Entry::Command { label: "R&eplace\u{2026}", keys: "Ctrl+H", id: cmd::REPLACE, enabled: always },
-    Entry::Command { label: "&Go to line\u{2026}", keys: "Ctrl+G", id: cmd::GO_TO_LINE, enabled: always },
+    Entry::Command { label: "&Find\u{2026}", keys: "Ctrl+F", id: cmd::FIND, enabled: source },
+    Entry::Command { label: "R&eplace\u{2026}", keys: "Ctrl+H", id: cmd::REPLACE, enabled: source },
+    Entry::Command { label: "&Go to line\u{2026}", keys: "Ctrl+G", id: cmd::GO_TO_LINE, enabled: source },
 ];
 
 pub const VIEW: &[Entry] = &[
@@ -658,13 +665,14 @@ fn state_of(a: &App) -> State {
         let tabs = a.tabs.borrow();
         tabs.active().and_then(|id| tabs.get(id)).map(|t| {
             // The Rendered view is read-only too (13).
-            let read_only = t.read_only() || t.view() == crate::tabs::View::Rendered;
-            (t.encoding(), t.eol(), read_only, t.is_untitled(), t.kind() == crate::tabs::Kind::Markdown)
+            let rendered = t.view() == crate::tabs::View::Rendered;
+            let read_only = t.read_only() || rendered;
+            (t.encoding(), t.eol(), read_only, t.is_untitled(), t.kind() == crate::tabs::Kind::Markdown, rendered)
         })
     };
     let wrap_allowed = findview::wrap_allowed(a);
-    let (encoding, eol, read_only, untitled, markdown) =
-        tab.unwrap_or((NEW_FILE.0, NEW_FILE.1, false, true, true));
+    let (encoding, eol, read_only, untitled, markdown, rendered) =
+        tab.unwrap_or((NEW_FILE.0, NEW_FILE.1, false, true, true, false));
     let ask = |msg| editor_call(a, msg) != 0;
     State {
         encoding,
@@ -676,6 +684,7 @@ fn state_of(a: &App) -> State {
         selection: !ask(sci::SCI_GETSELECTIONEMPTY),
         can_paste: ask(sci::SCI_CANPASTE),
         markdown,
+        rendered,
         wrap: findview::wrap_wanted(),
         wrap_allowed,
     }
@@ -722,6 +731,8 @@ pub fn run(a: &App, id: u16) -> bool {
             let eol = Eol::MENU[(id - cmd::EOL) as usize];
             on_active(&|t, tab| t.set_eol(tab, eol));
         }
+        // The accelerators reach here even when the menu item is greyed.
+        cmd::FIND | cmd::REPLACE | cmd::GO_TO_LINE if state_of(a).rendered => {}
         cmd::FIND => find::open(a, BarMode::Find),
         cmd::REPLACE => find::open(a, BarMode::Replace),
         cmd::GO_TO_LINE => find::open(a, BarMode::Goto),

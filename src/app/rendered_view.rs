@@ -47,6 +47,10 @@ pub(super) fn sync_rendered(a: &App) {
         let rendered = tab.filter(|t| t.view() == View::Rendered).map(Tab::id);
         (rendered, tabs.any_rendered(), tab.and_then(|t| t.path().map(Path::to_path_buf)))
     };
+    if rendered.is_some() {
+        // No text to search in the page: the find bar goes.
+        super::find::close(a);
+    }
     let Some(id) = rendered.filter(|id| a.shown.get() == Some(*id)) else {
         if BEHIND_PAGE.replace(false) {
             let page_was_up = webview::painted();

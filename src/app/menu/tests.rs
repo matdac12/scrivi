@@ -14,6 +14,7 @@ fn state() -> State {
         selection: true,
         can_paste: true,
         markdown: true,
+        rendered: false,
         wrap: true,
         wrap_allowed: true,
     }
@@ -203,6 +204,14 @@ fn find_replace_go_to_line_and_the_view_menu_are_on() {
 
 fn is_checked(items: &[Item], id: u16) -> bool {
     items.iter().any(|i| matches!(i, Item::Command { id: i, checked: true, .. } if *i == id))
+}
+
+#[test]
+fn find_replace_and_go_to_line_are_greyed_while_the_rendered_view_shows() {
+    let edit = items(EDIT, &State { rendered: true, read_only: true, ..state() });
+    for id in [cmd::FIND, cmd::REPLACE, cmd::GO_TO_LINE] {
+        assert!(!enabled(&edit, id), "{id}");
+    }
 }
 
 #[test]
