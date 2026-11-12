@@ -148,6 +148,7 @@ pub mod sci {
     pub const SC_WRAP_NONE: usize = 0;
     pub const SC_WRAP_WORD: usize = 1;
     pub const SC_WRAPINDENT_SAME: usize = 1;
+    pub const SC_LAYER_BASE: usize = 0;
     pub const SC_LAYER_UNDER_TEXT: usize = 1;
     pub const SC_ELEMENT_SELECTION_BACK: usize = 11;
     pub const SC_ELEMENT_SELECTION_INACTIVE_BACK: usize = 17;
@@ -326,7 +327,10 @@ impl Editor {
         self.call(SCI_SETMARGINWIDTHN, 2, 0);
 
         self.call(SCI_SETCARETLINEVISIBLE, 1, 0);
-        self.call(SCI_SETCARETLINELAYER, SC_LAYER_UNDER_TEXT, 0);
+        // Base layer: Scintilla paints the under-text layer selection first,
+        // caret line second, so an opaque caret line there hid the selection
+        // across the caret's whole wrapped paragraph.
+        self.call(SCI_SETCARETLINELAYER, SC_LAYER_BASE, 0);
         self.call(
             SCI_SETELEMENTCOLOUR,
             SC_ELEMENT_CARET_LINE_BACK,
