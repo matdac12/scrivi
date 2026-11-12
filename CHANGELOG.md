@@ -21,8 +21,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   replaces that Tab, as Windows 11 Notepad does.
 - Plain-ASCII files load faster: the 200 MB log takes about 0.35 s.
 - CI also runs `cargo fmt --check` and the install script's tests.
+- The Source view draws text with GDI, double-buffered, instead of
+  DirectWrite: selecting with the mouse no longer stalls on the screen's
+  refresh. Text may look slightly different.
 
 ### Fixed
+
+- A mouse selection inside the caret's paragraph shows again; the caret-line
+  tint was painted over it, so the whole paragraph looked selected.
 
 - An elevated launch with UAC off no longer relaunches through Explorer in a
   loop; "Run as administrator" still ends up as a normal, unelevated Window.

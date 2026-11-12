@@ -144,10 +144,11 @@ pub mod sci {
     pub const SC_EOL_CR: usize = 1;
     pub const SC_EOL_LF: usize = 2;
     pub const SC_MARGIN_NUMBER: isize = 1;
-    pub const SC_TECHNOLOGY_DIRECTWRITE: usize = 1;
+    pub const SC_TECHNOLOGY_DEFAULT: usize = 0;
     pub const SC_WRAP_NONE: usize = 0;
     pub const SC_WRAP_WORD: usize = 1;
     pub const SC_WRAPINDENT_SAME: usize = 1;
+    pub const SC_LAYER_BASE: usize = 0;
     pub const SC_LAYER_UNDER_TEXT: usize = 1;
     pub const SC_ELEMENT_SELECTION_BACK: usize = 11;
     pub const SC_ELEMENT_SELECTION_INACTIVE_BACK: usize = 17;
@@ -296,8 +297,10 @@ impl Editor {
     }
 
     fn apply_look(&self) {
-        self.call(SCI_SETTECHNOLOGY, SC_TECHNOLOGY_DIRECTWRITE, 0);
-        self.call(SCI_SETBUFFEREDDRAW, 0, 0);
+        // GDI, double-buffered: Direct2D waits for vsync on every repaint,
+        // which made drag-selection drop to 30 fps.
+        self.call(SCI_SETTECHNOLOGY, SC_TECHNOLOGY_DEFAULT, 0);
+        self.call(SCI_SETBUFFEREDDRAW, 1, 0);
         self.call(SCI_SETCODEPAGE, SC_CP_UTF8, 0);
         self.call(SCI_SETTABWIDTH, 4, 0);
         let threads = std::thread::available_parallelism().map_or(1, |n| n.get());
@@ -324,7 +327,10 @@ impl Editor {
         self.call(SCI_SETMARGINWIDTHN, 2, 0);
 
         self.call(SCI_SETCARETLINEVISIBLE, 1, 0);
-        self.call(SCI_SETCARETLINELAYER, SC_LAYER_UNDER_TEXT, 0);
+        // Base layer: Scintilla paints the under-text layer selection first,
+        // caret line second, so an opaque caret line there hid the selection
+        // across the caret's whole wrapped paragraph.
+        self.call(SCI_SETCARETLINELAYER, SC_LAYER_BASE, 0);
         self.call(
             SCI_SETELEMENTCOLOUR,
             SC_ELEMENT_CARET_LINE_BACK,
