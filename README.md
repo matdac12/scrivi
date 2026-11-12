@@ -14,7 +14,7 @@ Part of [mstack](https://github.com/matdac12/mstack).
 
 ## Status
 
-Version 0.1.0, the first release, is in its final hand check. It is checked by hand before each release
+Version 0.2.0 is the current release. Each release is checked by hand
 ([docs/qa.md](docs/qa.md)); the gaps found so far are under *Known limitations*.
 
 ## Install
