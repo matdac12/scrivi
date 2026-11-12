@@ -144,7 +144,7 @@ pub mod sci {
     pub const SC_EOL_CR: usize = 1;
     pub const SC_EOL_LF: usize = 2;
     pub const SC_MARGIN_NUMBER: isize = 1;
-    pub const SC_TECHNOLOGY_DIRECTWRITE: usize = 1;
+    pub const SC_TECHNOLOGY_DEFAULT: usize = 0;
     pub const SC_WRAP_NONE: usize = 0;
     pub const SC_WRAP_WORD: usize = 1;
     pub const SC_WRAPINDENT_SAME: usize = 1;
@@ -296,8 +296,10 @@ impl Editor {
     }
 
     fn apply_look(&self) {
-        self.call(SCI_SETTECHNOLOGY, SC_TECHNOLOGY_DIRECTWRITE, 0);
-        self.call(SCI_SETBUFFEREDDRAW, 0, 0);
+        // GDI, double-buffered: Direct2D waits for vsync on every repaint,
+        // which made drag-selection drop to 30 fps.
+        self.call(SCI_SETTECHNOLOGY, SC_TECHNOLOGY_DEFAULT, 0);
+        self.call(SCI_SETBUFFEREDDRAW, 1, 0);
         self.call(SCI_SETCODEPAGE, SC_CP_UTF8, 0);
         self.call(SCI_SETTABWIDTH, 4, 0);
         let threads = std::thread::available_parallelism().map_or(1, |n| n.get());
